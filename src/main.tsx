@@ -233,7 +233,7 @@ function App() {
 
         <section className="kpi-grid">
           <Metric label="Visit Telemed" value={numberText(s.totalVisits)} detail={`${numberText(s.totalPatients)} ผู้ป่วย`} tone="blue" />
-          <Metric label="ยอดเบิก สปสช." value={money(s.totalClaimAmount)} detail={`ADP TELMED ${money(s.claimPerCase)} / case`} tone="cyan" />
+          <Metric label="ยอดเบิก สปสช." value={money(s.totalClaimAmount)} detail={`รวมใบสั่งยา ${money(s.totalAmount)} | TELMED ${money(s.claimPerCase)} / case`} tone="cyan" />
           <Metric label="ปิดสิทธิ์แล้ว" value={`${s.closeRate}%`} detail={`${numberText(s.closeEpCount)} visit พร้อมจาก Close EP`} tone="green" />
           <Metric label="รอปิดสิทธิ์" value={numberText(s.pendingCount)} detail={`${numberText(s.readyCount)} visit ปิดสิทธิ์แล้ว`} tone="amber" />
         </section>
