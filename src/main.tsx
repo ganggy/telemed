@@ -103,6 +103,27 @@ const money = (value: number) => `฿${Number(value || 0).toLocaleString('th-TH'
 
 const numberText = (value: number) => Number(value || 0).toLocaleString('th-TH');
 
+const getDefaultApiBaseUrl = () => {
+  const { protocol, hostname } = window.location;
+  return `${protocol}//${hostname}:3516`;
+};
+
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl()).replace(/\/$/, '');
+
+const fetchApi = async (path: string) => {
+  const response = await fetch(`${apiBaseUrl}${path}`);
+  const text = await response.text();
+  const contentType = response.headers.get('content-type') || '';
+
+  if (!contentType.includes('application/json')) {
+    throw new Error(`API ไม่ได้ส่ง JSON กลับมา กรุณาตรวจว่า telemed-api รันที่ ${apiBaseUrl}`);
+  }
+
+  const json = JSON.parse(text);
+  if (!response.ok || !json.success) throw new Error(json.error || 'โหลดข้อมูลไม่สำเร็จ');
+  return json;
+};
+
 function App() {
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
@@ -118,9 +139,7 @@ function App() {
     setError('');
     try {
       const query = new URLSearchParams({ startDate, endDate });
-      const response = await fetch(`/api/telemed/summary?${query.toString()}`);
-      const json = await response.json();
-      if (!response.ok || !json.success) throw new Error(json.error || 'โหลดข้อมูลไม่สำเร็จ');
+      const json = await fetchApi(`/api/telemed/summary?${query.toString()}`);
       setData(json.data);
       setSelected((current) => current && json.data.recent.some((row: TelemedRow) => row.vn === current.vn) ? current : null);
     } catch (err) {
@@ -136,9 +155,7 @@ function App() {
     setDetail(null);
     setDetailLoading(true);
     try {
-      const response = await fetch(`/api/telemed/visits/${encodeURIComponent(row.vn)}`);
-      const json = await response.json();
-      if (!response.ok || !json.success) throw new Error(json.error || 'โหลดรายละเอียดไม่สำเร็จ');
+      const json = await fetchApi(`/api/telemed/visits/${encodeURIComponent(row.vn)}`);
       setDetail(json.data);
     } catch (err) {
       setError((err as Error).message);

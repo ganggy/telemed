@@ -47,6 +47,14 @@ HOSXP_DB=hos
 TELEMED_PORT=3516
 ```
 
+ถ้า build หน้าเว็บเพื่อใช้งานผ่าน host หรือ IP อื่น ให้กำหนด API endpoint ตอน build ได้ เช่น:
+
+```bash
+VITE_API_BASE_URL=http://192.168.2.202:3516 npm run build
+```
+
+ถ้าไม่ได้กำหนด ระบบจะเรียก API ที่ host เดียวกับหน้าเว็บและ port `3516` อัตโนมัติ
+
 ทดสอบ build:
 
 ```bash
@@ -124,6 +132,30 @@ http://192.168.2.202:3517
 ```bash
 curl "http://localhost:3516/api/health"
 curl "http://localhost:3516/api/telemed/summary"
+```
+
+## รันด้วย PM2
+
+```bash
+cd /opt/telemed
+npm install
+npm run build
+pm2 start "npx tsx server/index.ts" --name telemed-api
+pm2 start "serve -s dist -l 3517" --name telemed-web
+pm2 save
+pm2 startup
+```
+
+ถ้ามี process เดิมอยู่แล้วหลัง `git pull` ให้ใช้:
+
+```bash
+cd /opt/telemed
+git pull
+npm install
+npm run build
+pm2 restart telemed-api
+pm2 restart telemed-web
+pm2 save
 ```
 
 ## อัปเดตระบบ
