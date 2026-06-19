@@ -369,6 +369,8 @@ td span,
 td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .right { text-align: right; }
 .money { color: #0f9f70; font-weight: 900; }
+.money strong { color: #0f9f70; font-size: 0.92rem; }
+.money span { color: #5f7f91; font-weight: 800; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: 5px; }
 .chip { display: inline-flex; width: fit-content; padding: 3px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 900; }

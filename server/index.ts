@@ -25,6 +25,7 @@ const readFdhBusinessRules = () => {
 const businessRules = readFdhBusinessRules();
 const TELEMED_ADP_CODE = String(businessRules?.adp_codes?.telmed || 'TELMED').trim().toUpperCase();
 const TELEMED_EXPORT_CODE = String(businessRules?.project_codes?.ovstist_tele || '5').trim();
+const TELEMED_CLAIM_AMOUNT = 50;
 
 const pool = mysql.createPool({
   host: process.env.HOSXP_HOST,
@@ -89,6 +90,17 @@ const getTelemedVisitDetail = async (vn: string) => {
         COALESCE(ov.export_code, '') AS ovstistExportCode,
         COALESCE(ov.name, '') AS ovstistName,
         COALESCE((SELECT nhso_authen_code FROM nhso_confirm_privilege ncp WHERE ncp.vn = o.vn AND ncp.nhso_status = 'Y' AND ncp.nhso_authen_code REGEXP '^EP' LIMIT 1), '') AS closeEp,
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM opitemrece oo
+            JOIN s_drugitems d ON d.icode = oo.icode
+            WHERE oo.vn = o.vn
+              AND UPPER(COALESCE(d.nhso_adp_code, '')) = '${TELEMED_ADP_CODE}'
+            LIMIT 1
+          ) THEN ${TELEMED_CLAIM_AMOUNT}
+          ELSE 0
+        END AS claimAmount,
         COALESCE((SELECT SUM(COALESCE(oo.sum_price, oo.qty * oo.unitprice, 0)) FROM opitemrece oo WHERE oo.vn = o.vn), 0) AS totalAmount
       FROM ovst o
       LEFT JOIN patient pt ON pt.hn = o.hn
@@ -146,6 +158,7 @@ const getTelemedVisitDetail = async (vn: string) => {
         ovstistExportCode: toText(visit.ovstistExportCode),
         ovstistName: toText(visit.ovstistName),
         closeEp: toText(visit.closeEp),
+        claimAmount: toNumber(visit.claimAmount),
         totalAmount: toNumber(visit.totalAmount),
       },
       items: (Array.isArray(itemRows) ? itemRows : []).map((row: any) => ({
@@ -207,6 +220,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
         CASE WHEN ${telemedAdpSql} THEN 1 ELSE 0 END AS detectedByAdp,
         CASE WHEN ${telemedOvstistSql} THEN 1 ELSE 0 END AS detectedByOvstist,
         CASE WHEN ${hasCloseEpSql} THEN 1 ELSE 0 END AS hasCloseEp,
+        CASE WHEN ${telemedAdpSql} THEN ${TELEMED_CLAIM_AMOUNT} ELSE 0 END AS claimAmount,
         COALESCE((SELECT SUM(COALESCE(oo.sum_price, oo.qty * oo.unitprice, 0)) FROM opitemrece oo WHERE oo.vn = o.vn), 0) AS totalAmount,
         COALESCE((
           SELECT GROUP_CONCAT(DISTINCT COALESCE(sd.name, oo.icode) ORDER BY COALESCE(sd.name, oo.icode) SEPARATOR ', ')
@@ -244,6 +258,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
       detectedByAdp: toNumber(row.detectedByAdp) === 1,
       detectedByOvstist: toNumber(row.detectedByOvstist) === 1,
       hasCloseEp: toNumber(row.hasCloseEp) === 1,
+      claimAmount: toNumber(row.claimAmount),
       totalAmount: toNumber(row.totalAmount),
       telemedItems: toText(row.telemedItems),
     }));
@@ -255,6 +270,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
     const byHour = new Map<string, { hour: string; visits: number; amount: number }>();
     const source = { adpOnly: 0, ovstistOnly: 0, both: 0 };
     let totalAmount = 0;
+    let totalClaimAmount = 0;
     let closeEpCount = 0;
     let readyCount = 0;
 
@@ -262,6 +278,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
       visits.add(row.vn);
       if (row.hn) patients.add(row.hn);
       totalAmount += row.totalAmount;
+      totalClaimAmount += row.claimAmount;
       if (row.hasCloseEp) closeEpCount += 1;
       if (row.hasCloseEp) readyCount += 1;
 
@@ -316,6 +333,8 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
         totalVisits,
         totalPatients: patients.size,
         totalAmount: Number(totalAmount.toFixed(2)),
+        totalClaimAmount: Number(totalClaimAmount.toFixed(2)),
+        claimPerCase: TELEMED_CLAIM_AMOUNT,
         readyCount,
         pendingCount: Math.max(totalVisits - readyCount, 0),
         closeEpCount,

@@ -16,6 +16,7 @@ type TelemedRow = {
   detectedByAdp: boolean;
   detectedByOvstist: boolean;
   hasCloseEp: boolean;
+  claimAmount: number;
   totalAmount: number;
   telemedItems: string;
 };
@@ -28,6 +29,8 @@ type TelemedSummary = {
     totalVisits: number;
     totalPatients: number;
     totalAmount: number;
+    totalClaimAmount: number;
+    claimPerCase: number;
     readyCount: number;
     pendingCount: number;
     closeEpCount: number;
@@ -56,6 +59,7 @@ type VisitDetail = {
     ovstistExportCode: string;
     ovstistName: string;
     closeEp: string;
+    claimAmount: number;
     totalAmount: number;
   };
   items: Array<{
@@ -82,6 +86,8 @@ const emptyData: TelemedSummary = {
     totalVisits: 0,
     totalPatients: 0,
     totalAmount: 0,
+    totalClaimAmount: 0,
+    claimPerCase: 50,
     readyCount: 0,
     pendingCount: 0,
     closeEpCount: 0,
@@ -227,7 +233,7 @@ function App() {
 
         <section className="kpi-grid">
           <Metric label="Visit Telemed" value={numberText(s.totalVisits)} detail={`${numberText(s.totalPatients)} ผู้ป่วย`} tone="blue" />
-          <Metric label="มูลค่าค่าบริการ" value={money(s.totalAmount)} detail={`เฉลี่ย ${money(s.averageAmount)} / visit`} tone="cyan" />
+          <Metric label="ยอดเบิก สปสช." value={money(s.totalClaimAmount)} detail={`ADP TELMED ${money(s.claimPerCase)} / case`} tone="cyan" />
           <Metric label="ปิดสิทธิ์แล้ว" value={`${s.closeRate}%`} detail={`${numberText(s.closeEpCount)} visit พร้อมจาก Close EP`} tone="green" />
           <Metric label="รอปิดสิทธิ์" value={numberText(s.pendingCount)} detail={`${numberText(s.readyCount)} visit ปิดสิทธิ์แล้ว`} tone="amber" />
         </section>
@@ -313,7 +319,7 @@ function App() {
                       <th>สิทธิ์</th>
                       <th>ช่องทาง</th>
                       <th>สถานะ</th>
-                      <th className="right">ยอดเงิน</th>
+                      <th className="right">เบิก สปสช.</th>
                       <th>รายละเอียด</th>
                     </tr>
                   </thead>
@@ -335,7 +341,7 @@ function App() {
                             <span className={`chip ${row.hasCloseEp ? 'green' : 'muted'}`}>{row.hasCloseEp ? 'ปิดสิทธิ์แล้ว' : 'รอปิดสิทธิ์'}</span>
                           </div>
                         </td>
-                        <td className="right money">{money(row.totalAmount)}</td>
+                        <td className="right money"><strong>{money(row.claimAmount)}</strong><span>รวม {money(row.totalAmount)}</span></td>
                         <td><button className="detail-btn" type="button">เปิดรายละเอียด</button></td>
                       </tr>
                     ))}
@@ -389,6 +395,7 @@ function DetailDrawer({ row, detail, loading, onClose }: { row: TelemedRow | nul
   }
 
   const totalItems = detail?.items.reduce((sum, item) => sum + item.amount, 0) || row.totalAmount;
+  const claimAmount = detail?.visit.claimAmount ?? row.claimAmount;
 
   return (
     <aside className="detail-drawer">
@@ -404,7 +411,8 @@ function DetailDrawer({ row, detail, loading, onClose }: { row: TelemedRow | nul
       <div className="drawer-summary">
         <div><span>วันที่</span><strong>{row.serviceDate} {row.serviceTime}</strong></div>
         <div><span>สิทธิ์</span><strong>{row.hipdataCode || '-'}</strong></div>
-        <div><span>ยอดรวม</span><strong>{money(totalItems)}</strong></div>
+        <div><span>เบิก สปสช.</span><strong>{money(claimAmount)}</strong></div>
+        <div><span>ยอดค่าบริการรวม</span><strong>{money(totalItems)}</strong></div>
       </div>
 
       {loading ? (
@@ -422,7 +430,7 @@ function DetailDrawer({ row, detail, loading, onClose }: { row: TelemedRow | nul
                 <div>
                   <strong>{item.itemName || item.icode}</strong>
                   <span>{item.itemType} | {item.incomeCode} {item.incomeName}</span>
-                  {item.nhsoAdpCode && <em>ADP {item.nhsoAdpCode}</em>}
+                  {item.nhsoAdpCode && <em>ADP {item.nhsoAdpCode}{item.isTelemed ? ' | เบิกได้ 50 บาท/case' : ''}</em>}
                 </div>
                 <div className="rx-price">
                   <strong>{money(item.amount)}</strong>
