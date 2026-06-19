@@ -15,7 +15,6 @@ type TelemedRow = {
   ovstistName: string;
   detectedByAdp: boolean;
   detectedByOvstist: boolean;
-  hasAuthenPp: boolean;
   hasCloseEp: boolean;
   totalAmount: number;
   telemedItems: string;
@@ -32,10 +31,8 @@ type TelemedSummary = {
     readyCount: number;
     pendingCount: number;
     closeEpCount: number;
-    authenPpCount: number;
     readyRate: number;
     closeRate: number;
-    authenRate: number;
     averageAmount: number;
   };
   source: { adpOnly: number; ovstistOnly: number; both: number };
@@ -58,8 +55,6 @@ type VisitDetail = {
     hipdataCode: string;
     ovstistExportCode: string;
     ovstistName: string;
-    authenhosPp: string;
-    visitPp: string;
     closeEp: string;
     totalAmount: number;
   };
@@ -90,10 +85,8 @@ const emptyData: TelemedSummary = {
     readyCount: 0,
     pendingCount: 0,
     closeEpCount: 0,
-    authenPpCount: 0,
     readyRate: 0,
     closeRate: 0,
-    authenRate: 0,
     averageAmount: 0,
   },
   source: { adpOnly: 0, ovstistOnly: 0, both: 0 },
@@ -162,7 +155,7 @@ function App() {
   const maxDailyVisits = Math.max(...data.byDate.map((row) => row.visits), 1);
   const maxRightVisits = Math.max(...data.byRight.map((row) => row.visits), 1);
   const maxHourVisits = Math.max(...data.byHour.map((row) => row.visits), 1);
-  const readyStop = `${s.readyRate}%`;
+  const closeStop = `${s.closeRate}%`;
 
   const sourceRows = useMemo(() => {
     const total = Math.max(data.source.adpOnly + data.source.ovstistOnly + data.source.both, 1);
@@ -218,14 +211,14 @@ function App() {
         <section className="kpi-grid">
           <Metric label="Visit Telemed" value={numberText(s.totalVisits)} detail={`${numberText(s.totalPatients)} ผู้ป่วย`} tone="blue" />
           <Metric label="มูลค่าค่าบริการ" value={money(s.totalAmount)} detail={`เฉลี่ย ${money(s.averageAmount)} / visit`} tone="cyan" />
-          <Metric label="พร้อมส่ง" value={`${s.readyRate}%`} detail={`${numberText(s.readyCount)} visit มี PP และ EP`} tone="green" />
-          <Metric label="ต้องติดตาม" value={numberText(s.pendingCount)} detail={`Authen ${s.authenRate}% | ปิดสิทธิ ${s.closeRate}%`} tone="amber" />
+          <Metric label="ปิดสิทธิ์แล้ว" value={`${s.closeRate}%`} detail={`${numberText(s.closeEpCount)} visit พร้อมจาก Close EP`} tone="green" />
+          <Metric label="รอปิดสิทธิ์" value={numberText(s.pendingCount)} detail={`${numberText(s.readyCount)} visit ปิดสิทธิ์แล้ว`} tone="amber" />
         </section>
 
         <section className="layout-main">
           <div className="main-stack">
             <section className="chart-band">
-              <Panel title="แนวโน้มรายวัน" subtitle="visit พร้อมส่งและต้องติดตามในแต่ละวัน" end={`${numberText(s.totalVisits)} visit`}>
+              <Panel title="แนวโน้มรายวัน" subtitle="visit ปิดสิทธิ์แล้วและรอปิดสิทธิ์ในแต่ละวัน" end={`${numberText(s.totalVisits)} visit`}>
                 <div className="daily-chart">
                   {data.byDate.map((row) => {
                     const height = Math.max((row.visits / maxDailyVisits) * 188, 8);
@@ -242,13 +235,13 @@ function App() {
                 </div>
               </Panel>
 
-              <Panel title="ความพร้อมส่ง" subtitle="PP Authen + EP Close">
-                <div className="donut" style={{ background: `conic-gradient(#14f195 0 ${readyStop}, rgba(255,255,255,0.16) ${readyStop} 100%)` }}>
-                  <div><strong>{s.readyRate}%</strong><span>ready</span></div>
+              <Panel title="สถานะปิดสิทธิ์" subtitle="นับเฉพาะ Close EP">
+                <div className="donut" style={{ background: `conic-gradient(#14f195 0 ${closeStop}, rgba(255,255,255,0.16) ${closeStop} 100%)` }}>
+                  <div><strong>{s.closeRate}%</strong><span>closed</span></div>
                 </div>
                 <div className="readiness">
-                  <div><span>Authen PP</span><strong>{numberText(s.authenPpCount)}</strong></div>
-                  <div><span>Close EP</span><strong>{numberText(s.closeEpCount)}</strong></div>
+                  <div><span>ปิดสิทธิ์แล้ว</span><strong>{numberText(s.closeEpCount)}</strong></div>
+                  <div><span>รอปิดสิทธิ์</span><strong>{numberText(s.pendingCount)}</strong></div>
                 </div>
               </Panel>
             </section>
@@ -322,8 +315,7 @@ function App() {
                         </td>
                         <td>
                           <div className="chip-row">
-                            <span className={`chip ${row.hasAuthenPp ? 'green' : 'muted'}`}>PP</span>
-                            <span className={`chip ${row.hasCloseEp ? 'green' : 'muted'}`}>EP</span>
+                            <span className={`chip ${row.hasCloseEp ? 'green' : 'muted'}`}>{row.hasCloseEp ? 'ปิดสิทธิ์แล้ว' : 'รอปิดสิทธิ์'}</span>
                           </div>
                         </td>
                         <td className="right money">{money(row.totalAmount)}</td>
@@ -403,8 +395,7 @@ function DetailDrawer({ row, detail, loading, onClose }: { row: TelemedRow | nul
       ) : (
         <>
           <div className="status-strip">
-            <span className={detail?.visit.authenhosPp || detail?.visit.visitPp ? 'ok' : 'wait'}>PP {detail?.visit.authenhosPp || detail?.visit.visitPp || 'รอตรวจ'}</span>
-            <span className={detail?.visit.closeEp ? 'ok' : 'wait'}>EP {detail?.visit.closeEp || 'รอปิดสิทธิ'}</span>
+            <span className={detail?.visit.closeEp ? 'ok' : 'wait'}>{detail?.visit.closeEp ? `ปิดสิทธิ์แล้ว ${detail.visit.closeEp}` : 'รอปิดสิทธิ์'}</span>
           </div>
 
           <h3>รายการค่าบริการ</h3>

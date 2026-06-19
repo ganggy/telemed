@@ -14,6 +14,8 @@
 - `s_drugitems.nhso_adp_code = TELMED`
 - `ovstist.export_code = 5`
 
+สถานะความพร้อมของรายการเช็คเฉพาะการปิดสิทธิ์ `Close EP` ไม่ได้นำการขอ authen/PP มาเป็นเงื่อนไขประกอบ
+
 ## ติดตั้งบน Ubuntu เครื่อง 192.168.2.202
 
 ```bash

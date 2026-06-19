@@ -88,8 +88,6 @@ const getTelemedVisitDetail = async (vn: string) => {
         COALESCE(ptt.hipdata_code, '') AS hipdataCode,
         COALESCE(ov.export_code, '') AS ovstistExportCode,
         COALESCE(ov.name, '') AS ovstistName,
-        COALESCE((SELECT claim_code FROM authenhos ah WHERE ah.vn = o.vn AND ah.claim_code REGEXP '^PP' LIMIT 1), '') AS authenhosPp,
-        COALESCE((SELECT auth_code FROM visit_pttype vp WHERE vp.vn = o.vn AND vp.auth_code REGEXP '^PP' LIMIT 1), '') AS visitPp,
         COALESCE((SELECT nhso_authen_code FROM nhso_confirm_privilege ncp WHERE ncp.vn = o.vn AND ncp.nhso_status = 'Y' AND ncp.nhso_authen_code REGEXP '^EP' LIMIT 1), '') AS closeEp,
         COALESCE((SELECT SUM(COALESCE(oo.sum_price, oo.qty * oo.unitprice, 0)) FROM opitemrece oo WHERE oo.vn = o.vn), 0) AS totalAmount
       FROM ovst o
@@ -147,8 +145,6 @@ const getTelemedVisitDetail = async (vn: string) => {
         hipdataCode: toText(visit.hipdataCode),
         ovstistExportCode: toText(visit.ovstistExportCode),
         ovstistName: toText(visit.ovstistName),
-        authenhosPp: toText(visit.authenhosPp),
-        visitPp: toText(visit.visitPp),
         closeEp: toText(visit.closeEp),
         totalAmount: toNumber(visit.totalAmount),
       },
@@ -184,12 +180,6 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
     )
   `;
   const telemedOvstistSql = `COALESCE(ov.export_code, '') = '${TELEMED_EXPORT_CODE}'`;
-  const hasAuthenPpSql = `
-    (
-      COALESCE((SELECT claim_code FROM authenhos ah WHERE ah.vn = o.vn AND ah.claim_code REGEXP '^PP' LIMIT 1), '') <> ''
-      OR COALESCE((SELECT auth_code FROM visit_pttype vp WHERE vp.vn = o.vn AND vp.auth_code REGEXP '^PP' LIMIT 1), '') <> ''
-    )
-  `;
   const hasCloseEpSql = `
     (
       COALESCE((SELECT nhso_authen_code FROM nhso_confirm_privilege ncp WHERE ncp.vn = o.vn AND ncp.nhso_status = 'Y' AND ncp.nhso_authen_code REGEXP '^EP' LIMIT 1), '') <> ''
@@ -216,7 +206,6 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
         COALESCE(ov.name, '') AS ovstistName,
         CASE WHEN ${telemedAdpSql} THEN 1 ELSE 0 END AS detectedByAdp,
         CASE WHEN ${telemedOvstistSql} THEN 1 ELSE 0 END AS detectedByOvstist,
-        CASE WHEN ${hasAuthenPpSql} THEN 1 ELSE 0 END AS hasAuthenPp,
         CASE WHEN ${hasCloseEpSql} THEN 1 ELSE 0 END AS hasCloseEp,
         COALESCE((SELECT SUM(COALESCE(oo.sum_price, oo.qty * oo.unitprice, 0)) FROM opitemrece oo WHERE oo.vn = o.vn), 0) AS totalAmount,
         COALESCE((
@@ -254,7 +243,6 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
       ovstistName: toText(row.ovstistName),
       detectedByAdp: toNumber(row.detectedByAdp) === 1,
       detectedByOvstist: toNumber(row.detectedByOvstist) === 1,
-      hasAuthenPp: toNumber(row.hasAuthenPp) === 1,
       hasCloseEp: toNumber(row.hasCloseEp) === 1,
       totalAmount: toNumber(row.totalAmount),
       telemedItems: toText(row.telemedItems),
@@ -268,7 +256,6 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
     const source = { adpOnly: 0, ovstistOnly: 0, both: 0 };
     let totalAmount = 0;
     let closeEpCount = 0;
-    let authenPpCount = 0;
     let readyCount = 0;
 
     detailRows.forEach((row) => {
@@ -276,8 +263,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
       if (row.hn) patients.add(row.hn);
       totalAmount += row.totalAmount;
       if (row.hasCloseEp) closeEpCount += 1;
-      if (row.hasAuthenPp) authenPpCount += 1;
-      if (row.hasCloseEp && row.hasAuthenPp) readyCount += 1;
+      if (row.hasCloseEp) readyCount += 1;
 
       if (row.detectedByAdp && row.detectedByOvstist) source.both += 1;
       else if (row.detectedByAdp) source.adpOnly += 1;
@@ -287,7 +273,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
       const day = byDate.get(dateKey) || { date: dateKey, visits: 0, amount: 0, ready: 0, pending: 0 };
       day.visits += 1;
       day.amount += row.totalAmount;
-      if (row.hasCloseEp && row.hasAuthenPp) day.ready += 1;
+      if (row.hasCloseEp) day.ready += 1;
       else day.pending += 1;
       byDate.set(dateKey, day);
 
@@ -304,7 +290,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
       right.visits += 1;
       if (row.hn) right.patients.add(row.hn);
       right.amount += row.totalAmount;
-      if (row.hasCloseEp && row.hasAuthenPp) right.ready += 1;
+      if (row.hasCloseEp) right.ready += 1;
       else right.pending += 1;
       byRight.set(rightKey, right);
 
@@ -333,10 +319,8 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
         readyCount,
         pendingCount: Math.max(totalVisits - readyCount, 0),
         closeEpCount,
-        authenPpCount,
         readyRate: percent(readyCount),
         closeRate: percent(closeEpCount),
-        authenRate: percent(authenPpCount),
         averageAmount: totalVisits > 0 ? Number((totalAmount / totalVisits).toFixed(2)) : 0,
       },
       source,
