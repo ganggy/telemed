@@ -118,11 +118,25 @@ type CivilSummary = {
   recent: CivilRow[];
 };
 
+type CivilTarget = {
+  visitEnabled: boolean;
+  visitTarget: number;
+  amountEnabled: boolean;
+  amountTarget: number;
+};
+
+type CivilTargetsData = {
+  month: string;
+  defaultVisitTarget: number;
+  targets: Record<string, CivilTarget>;
+};
+
 type DrawerRow = Pick<TelemedRow, 'vn' | 'hn' | 'serviceDate' | 'serviceTime' | 'patientName' | 'hipdataCode' | 'totalAmount'> & {
   claimAmount?: number;
 };
 
 const today = new Date().toISOString().slice(0, 10);
+const currentMonthStart = `${today.slice(0, 7)}-01`;
 
 const emptyData: TelemedSummary = {
   startDate: today,
@@ -165,6 +179,22 @@ const emptyCivilData: CivilSummary = {
   recent: [],
 };
 
+const serviceMeta = [
+  { key: 'thai', label: 'แพทย์แผนไทย' },
+  { key: 'physical', label: 'กายภาพบำบัด' },
+  { key: 'dental', label: 'ทันตกรรม' },
+] as const;
+const rightMeta = ['OFC', 'LGO'] as const;
+
+const makeDefaultTargets = (month: string): CivilTargetsData => ({
+  month,
+  defaultVisitTarget: 120,
+  targets: Object.fromEntries(serviceMeta.flatMap((service) => rightMeta.map((right) => [
+    `${service.key}:${right}`,
+    { visitEnabled: true, visitTarget: 120, amountEnabled: false, amountTarget: 0 },
+  ]))),
+});
+
 const money = (value: number) => `฿${Number(value || 0).toLocaleString('th-TH', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
@@ -179,8 +209,8 @@ const getDefaultApiBaseUrl = () => {
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl()).replace(/\/$/, '');
 
-const fetchApi = async (path: string) => {
-  const response = await fetch(`${apiBaseUrl}${path}`);
+const fetchApi = async (path: string, options?: RequestInit) => {
+  const response = await fetch(`${apiBaseUrl}${path}`, options);
   const text = await response.text();
   const contentType = response.headers.get('content-type') || '';
 
@@ -428,11 +458,15 @@ function App() {
 }
 
 function CivilServiceMonitor() {
-  const [startDate, setStartDate] = useState(today);
+  const [startDate, setStartDate] = useState(currentMonthStart);
   const [endDate, setEndDate] = useState(today);
   const [rightFilter, setRightFilter] = useState<'ALL' | 'OFC' | 'LGO'>('ALL');
   const [serviceFilter, setServiceFilter] = useState<'all' | CivilRow['serviceGroup']>('all');
   const [data, setData] = useState<CivilSummary>(emptyCivilData);
+  const [targets, setTargets] = useState<CivilTargetsData>(() => makeDefaultTargets(today.slice(0, 7)));
+  const [targetDraft, setTargetDraft] = useState<CivilTargetsData>(() => makeDefaultTargets(today.slice(0, 7)));
+  const [showTargets, setShowTargets] = useState(false);
+  const [savingTargets, setSavingTargets] = useState(false);
   const [selected, setSelected] = useState<CivilRow | null>(null);
   const [detail, setDetail] = useState<VisitDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -444,8 +478,14 @@ function CivilServiceMonitor() {
     setError('');
     try {
       const query = new URLSearchParams({ startDate, endDate });
-      const json = await fetchApi(`/api/civil-service/summary?${query.toString()}`);
-      setData(json.data);
+      const month = startDate.slice(0, 7);
+      const [summaryJson, targetsJson] = await Promise.all([
+        fetchApi(`/api/civil-service/summary?${query.toString()}`),
+        fetchApi(`/api/civil-service/targets?month=${encodeURIComponent(month)}`),
+      ]);
+      setData(summaryJson.data);
+      setTargets(targetsJson.data);
+      setTargetDraft(targetsJson.data);
       setSelected(null);
       setDetail(null);
     } catch (err) {
@@ -453,6 +493,51 @@ function CivilServiceMonitor() {
       setError((err as Error).message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openTargets = () => {
+    setTargetDraft(structuredClone(targets));
+    setShowTargets(true);
+  };
+
+  const loadTargetMonth = async (month: string) => {
+    setError('');
+    try {
+      const json = await fetchApi(`/api/civil-service/targets?month=${encodeURIComponent(month)}`);
+      setTargetDraft(json.data);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const updateTarget = (key: string, patch: Partial<CivilTarget>) => {
+    setTargetDraft((current) => ({
+      ...current,
+      targets: {
+        ...current.targets,
+        [key]: { ...current.targets[key], ...patch },
+      },
+    }));
+  };
+
+  const saveTargets = async () => {
+    setSavingTargets(true);
+    setError('');
+    try {
+      const json = await fetchApi('/api/civil-service/targets', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ month: targetDraft.month, targets: targetDraft.targets }),
+      });
+      const saved = { ...targetDraft, targets: json.data.targets };
+      if (saved.month === startDate.slice(0, 7)) setTargets(saved);
+      setTargetDraft(saved);
+      setShowTargets(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSavingTargets(false);
     }
   };
 
@@ -491,6 +576,7 @@ function CivilServiceMonitor() {
             <span>OFC ข้าราชการ</span>
             <span>LGO อปท.</span>
             <span>ข้อมูลจากใบสั่ง HOSxP</span>
+            <button type="button" className="target-settings-btn" onClick={openTargets}>ตั้งเป้าหมายรายเดือน</button>
           </div>
         </div>
         <section className="filters">
@@ -527,7 +613,8 @@ function CivilServiceMonitor() {
       </section>
 
       <section className="civil-category-grid">
-        {data.matrix.map((row) => (
+        {data.matrix.map((row) => {
+          return (
           <button
             type="button"
             key={row.key}
@@ -537,12 +624,19 @@ function CivilServiceMonitor() {
             <div className="service-symbol">{row.key === 'thai' ? 'ท' : row.key === 'physical' ? 'ก' : 'ทฟ'}</div>
             <div className="service-card-head"><strong>{row.label}</strong><span>{numberText(row.total)} visit</span></div>
             <div className="service-split">
-              <div><span>OFC</span><strong>{numberText(row.ofc.visits)}</strong><small>{money(row.ofc.amount)}</small></div>
-              <div><span>LGO</span><strong>{numberText(row.lgo.visits)}</strong><small>{money(row.lgo.amount)}</small></div>
+              <div>
+                <span>OFC</span><strong>{numberText(row.ofc.visits)}</strong><small>{money(row.ofc.amount)}</small>
+                <TargetProgress target={targets.targets[`${row.key}:OFC`]} visits={row.ofc.visits} amount={row.ofc.amount} />
+              </div>
+              <div>
+                <span>LGO</span><strong>{numberText(row.lgo.visits)}</strong><small>{money(row.lgo.amount)}</small>
+                <TargetProgress target={targets.targets[`${row.key}:LGO`]} visits={row.lgo.visits} amount={row.lgo.amount} />
+              </div>
             </div>
             <footer><span>{numberText(row.patients)} คน</span><strong>{money(row.amount)}</strong></footer>
           </button>
-        ))}
+          );
+        })}
       </section>
 
       <section className="civil-overview">
@@ -613,7 +707,80 @@ function CivilServiceMonitor() {
         </Panel>
         <DetailDrawer row={selected} detail={detail} loading={detailLoading} mode="civil" onClose={() => { setSelected(null); setDetail(null); }} />
       </section>
+
+      {showTargets ? (
+        <div className="target-modal-backdrop" role="presentation">
+          <section className="target-modal" role="dialog" aria-modal="true" aria-labelledby="target-title">
+            <header>
+              <div><h2 id="target-title">ตั้งเป้าหมายรายเดือน</h2><p>กำหนดแยกตามหน่วยบริการและสิทธิ์ เปิดใช้เป้า visit ยอดเงิน หรือทั้งสองอย่าง</p></div>
+              <button type="button" className="icon-close" onClick={() => setShowTargets(false)} aria-label="ปิด">×</button>
+            </header>
+            <label className="target-month">
+              <span>เดือนเป้าหมาย</span>
+              <input type="month" value={targetDraft.month} onChange={(event) => void loadTargetMonth(event.target.value)} />
+            </label>
+            <div className="target-editor">
+              {serviceMeta.map((service) => (
+                <section className={`target-unit ${service.key}`} key={service.key}>
+                  <h3>{service.label}</h3>
+                  {rightMeta.map((right) => {
+                    const key = `${service.key}:${right}`;
+                    const target = targetDraft.targets[key];
+                    return (
+                      <div className="target-row" key={key}>
+                        <strong className={`right-badge ${right.toLowerCase()}`}>{right}</strong>
+                        <label className="target-toggle">
+                          <input type="checkbox" checked={target.visitEnabled} onChange={(event) => updateTarget(key, { visitEnabled: event.target.checked })} />
+                          <span>จำนวน visit</span>
+                        </label>
+                        <label className="target-value">
+                          <input type="number" min="0" disabled={!target.visitEnabled} value={target.visitTarget} onChange={(event) => updateTarget(key, { visitTarget: Number(event.target.value) })} />
+                          <span>visit</span>
+                        </label>
+                        <label className="target-toggle">
+                          <input type="checkbox" checked={target.amountEnabled} onChange={(event) => updateTarget(key, { amountEnabled: event.target.checked })} />
+                          <span>ยอดเงิน</span>
+                        </label>
+                        <label className="target-value">
+                          <input type="number" min="0" step="100" disabled={!target.amountEnabled} value={target.amountTarget} onChange={(event) => updateTarget(key, { amountTarget: Number(event.target.value) })} />
+                          <span>บาท</span>
+                        </label>
+                      </div>
+                    );
+                  })}
+                </section>
+              ))}
+            </div>
+            <footer>
+              <span>ค่าเริ่มต้น {numberText(targetDraft.defaultVisitTarget)} visit ต่อหน่วย/สิทธิ์</span>
+              <div><button type="button" className="secondary-btn" onClick={() => setShowTargets(false)}>ยกเลิก</button><button type="button" className="save-target-btn" disabled={savingTargets} onClick={() => void saveTargets()}>{savingTargets ? 'กำลังบันทึก' : 'บันทึกเป้าหมาย'}</button></div>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </main>
+  );
+}
+
+function TargetProgress({ target, visits, amount }: { target?: CivilTarget; visits: number; amount: number }) {
+  if (!target || (!target.visitEnabled && !target.amountEnabled)) {
+    return <div className="target-progress disabled">ยังไม่กำหนดเป้า</div>;
+  }
+  const rows = [
+    target.visitEnabled ? { label: `${numberText(visits)}/${numberText(target.visitTarget)} visit`, percent: target.visitTarget > 0 ? (visits / target.visitTarget) * 100 : 0 } : null,
+    target.amountEnabled ? { label: `${money(amount)}/${money(target.amountTarget)}`, percent: target.amountTarget > 0 ? (amount / target.amountTarget) * 100 : 0 } : null,
+  ].filter(Boolean) as Array<{ label: string; percent: number }>;
+
+  return (
+    <div className="target-progress">
+      {rows.map((progress) => (
+        <div key={progress.label}>
+          <span>{progress.label}</span>
+          <i><b style={{ width: `${Math.min(Math.max(progress.percent, 0), 100)}%` }} /></i>
+          <em>{Math.round(progress.percent)}%</em>
+        </div>
+      ))}
+    </div>
   );
 }
 

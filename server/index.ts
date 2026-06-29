@@ -26,6 +26,10 @@ const businessRules = readFdhBusinessRules();
 const TELEMED_ADP_CODE = String(businessRules?.adp_codes?.telmed || 'TELMED').trim().toUpperCase();
 const TELEMED_EXPORT_CODE = String(businessRules?.project_codes?.ovstist_tele || '5').trim();
 const TELEMED_CLAIM_AMOUNT = 50;
+const CIVIL_TARGETS_PATH = path.resolve(process.cwd(), 'data', 'civil-service-targets.json');
+const CIVIL_SERVICE_KEYS = ['thai', 'physical', 'dental'] as const;
+const CIVIL_RIGHT_KEYS = ['OFC', 'LGO'] as const;
+const DEFAULT_CIVIL_VISIT_TARGET = 120;
 
 const pool = mysql.createPool({
   host: process.env.HOSXP_HOST,
@@ -57,6 +61,50 @@ const toNumber = (value: unknown) => {
 };
 
 const toText = (value: unknown) => String(value ?? '').trim();
+
+type CivilTarget = {
+  visitEnabled: boolean;
+  visitTarget: number;
+  amountEnabled: boolean;
+  amountTarget: number;
+};
+
+const defaultCivilTargets = () => Object.fromEntries(
+  CIVIL_SERVICE_KEYS.flatMap((service) => CIVIL_RIGHT_KEYS.map((right) => [
+    `${service}:${right}`,
+    {
+      visitEnabled: true,
+      visitTarget: DEFAULT_CIVIL_VISIT_TARGET,
+      amountEnabled: false,
+      amountTarget: 0,
+    },
+  ]))
+) as Record<string, CivilTarget>;
+
+const readCivilTargets = () => {
+  if (!fs.existsSync(CIVIL_TARGETS_PATH)) return {} as Record<string, Record<string, CivilTarget>>;
+  try {
+    return JSON.parse(fs.readFileSync(CIVIL_TARGETS_PATH, 'utf8')) as Record<string, Record<string, CivilTarget>>;
+  } catch {
+    return {} as Record<string, Record<string, CivilTarget>>;
+  }
+};
+
+const getCivilTargetsForMonth = (month: string) => {
+  const stored = readCivilTargets()[month] || {};
+  const defaults = defaultCivilTargets();
+  return Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => {
+    const target = stored[key];
+    return [key, target ? { ...fallback, ...target } : fallback];
+  })) as Record<string, CivilTarget>;
+};
+
+const writeCivilTargetsForMonth = (month: string, targets: Record<string, CivilTarget>) => {
+  const allTargets = readCivilTargets();
+  allTargets[month] = targets;
+  fs.mkdirSync(path.dirname(CIVIL_TARGETS_PATH), { recursive: true });
+  fs.writeFileSync(CIVIL_TARGETS_PATH, `${JSON.stringify(allTargets, null, 2)}\n`, 'utf8');
+};
 
 const buildTelemedExistsSql = (visitAlias: string, ovstistAlias: string) => `
   (
@@ -365,42 +413,6 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
   }
 };
 
-const CIVIL_SERVICE_CASE_SQL = `
-  CASE
-    WHEN EXISTS (
-      SELECT 1
-      FROM opitemrece oi
-      LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
-      LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
-      LEFT JOIN income inc ON inc.income = oi.income
-      WHERE oi.vn = o.vn
-        AND CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, ''))
-          REGEXP 'แพทย์แผนไทย|แผนไทย|สมุนไพร|นวดไทย|ประคบ|อบสมุนไพร'
-    ) THEN 'thai'
-    WHEN EXISTS (
-      SELECT 1
-      FROM opitemrece oi
-      LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
-      LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
-      LEFT JOIN income inc ON inc.income = oi.income
-      WHERE oi.vn = o.vn
-        AND LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
-          REGEXP 'กายภาพ|เวชศาสตร์ฟื้นฟู|ฟื้นฟูสมรรถภาพ|physio'
-    ) THEN 'physical'
-    WHEN EXISTS (
-      SELECT 1
-      FROM opitemrece oi
-      LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
-      LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
-      LEFT JOIN income inc ON inc.income = oi.income
-      WHERE oi.vn = o.vn
-        AND LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
-          REGEXP 'ทันต|dental|ถอนฟัน|อุดฟัน|ขูดหินปูน'
-    ) THEN 'dental'
-    ELSE ''
-  END
-`;
-
 const getCivilServiceSummary = async (start: string, end: string) => {
   const connection = await getConnection();
   try {
@@ -418,23 +430,31 @@ const getCivilServiceSummary = async (start: string, end: string) => {
           o.pttype,
           COALESCE(ptt.name, '') AS pttypeName,
           UPPER(COALESCE(ptt.hipdata_code, '')) AS rightCode,
-          ${CIVIL_SERVICE_CASE_SQL} AS serviceGroup,
-          COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount,
-          COALESCE((
-            SELECT GROUP_CONCAT(DISTINCT COALESCE(sd.name, ndi.name, oi.icode) ORDER BY COALESCE(sd.name, ndi.name, oi.icode) SEPARATOR ', ')
-            FROM opitemrece oi
-            LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
-            LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
-            LEFT JOIN income inc ON inc.income = oi.income
-            WHERE oi.vn = o.vn
-              AND LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
-                REGEXP 'แพทย์แผนไทย|แผนไทย|สมุนไพร|นวดไทย|ประคบ|อบสมุนไพร|กายภาพ|เวชศาสตร์ฟื้นฟู|ฟื้นฟูสมรรถภาพ|physio|ทันต|dental|ถอนฟัน|อุดฟัน|ขูดหินปูน'
-          ), '') AS serviceItems
+          CASE
+            WHEN MAX(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, ''))
+              REGEXP 'แพทย์แผนไทย|แผนไทย|สมุนไพร|นวดไทย|ประคบ|อบสมุนไพร') = 1 THEN 'thai'
+            WHEN MAX(LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
+              REGEXP 'กายภาพ|เวชศาสตร์ฟื้นฟู|ฟื้นฟูสมรรถภาพ|physio') = 1 THEN 'physical'
+            WHEN MAX(LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
+              REGEXP 'ทันต|dental|ถอนฟัน|อุดฟัน|ขูดหินปูน') = 1 THEN 'dental'
+            ELSE ''
+          END AS serviceGroup,
+          COALESCE(SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)), 0) AS totalAmount,
+          COALESCE(GROUP_CONCAT(DISTINCT CASE
+            WHEN LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
+              REGEXP 'แพทย์แผนไทย|แผนไทย|สมุนไพร|นวดไทย|ประคบ|อบสมุนไพร|กายภาพ|เวชศาสตร์ฟื้นฟู|ฟื้นฟูสมรรถภาพ|physio|ทันต|dental|ถอนฟัน|อุดฟัน|ขูดหินปูน'
+            THEN COALESCE(sd.name, ndi.name, oi.icode)
+          END ORDER BY COALESCE(sd.name, ndi.name, oi.icode) SEPARATOR ', '), '') AS serviceItems
         FROM ovst o
         JOIN pttype ptt ON ptt.pttype = o.pttype
         LEFT JOIN patient pt ON pt.hn = o.hn
+        JOIN opitemrece oi ON oi.vn = o.vn
+        LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
+        LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
+        LEFT JOIN income inc ON inc.income = oi.income
         WHERE o.vstdate BETWEEN ? AND ?
           AND UPPER(COALESCE(ptt.hipdata_code, '')) IN ('OFC', 'LGO')
+        GROUP BY o.vn
       ) civil
       WHERE civil.serviceGroup <> ''
       ORDER BY civil.serviceDate DESC, civil.serviceTime DESC, civil.vn DESC
@@ -571,6 +591,51 @@ app.get('/api/civil-service/summary', async (req, res) => {
   } catch (error) {
     console.error('GET /api/civil-service/summary error:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'โหลดข้อมูลสิทธิ์ข้าราชการไม่สำเร็จ' });
+  }
+});
+
+app.get('/api/civil-service/targets', (req, res) => {
+  const month = toText(req.query.month);
+  if (!/^\d{4}-\d{2}$/.test(month)) {
+    return res.status(400).json({ success: false, error: 'ต้องระบุเดือนในรูปแบบ YYYY-MM' });
+  }
+  return res.json({
+    success: true,
+    data: {
+      month,
+      defaultVisitTarget: DEFAULT_CIVIL_VISIT_TARGET,
+      targets: getCivilTargetsForMonth(month),
+    },
+  });
+});
+
+app.put('/api/civil-service/targets', (req, res) => {
+  try {
+    const month = toText(req.body?.month);
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ success: false, error: 'ต้องระบุเดือนในรูปแบบ YYYY-MM' });
+    }
+
+    const incoming = req.body?.targets && typeof req.body.targets === 'object' ? req.body.targets : {};
+    const targets = defaultCivilTargets();
+    Object.keys(targets).forEach((key) => {
+      const value = incoming[key];
+      if (!value || typeof value !== 'object') return;
+      const visitTarget = Math.max(toNumber(value.visitTarget), 0);
+      const amountTarget = Math.max(toNumber(value.amountTarget), 0);
+      targets[key] = {
+        visitEnabled: Boolean(value.visitEnabled),
+        visitTarget,
+        amountEnabled: Boolean(value.amountEnabled),
+        amountTarget,
+      };
+    });
+
+    writeCivilTargetsForMonth(month, targets);
+    return res.json({ success: true, data: { month, targets } });
+  } catch (error) {
+    console.error('PUT /api/civil-service/targets error:', error);
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'บันทึกเป้าหมายไม่สำเร็จ' });
   }
 });
 
