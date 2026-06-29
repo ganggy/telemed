@@ -76,6 +76,52 @@ type VisitDetail = {
   }>;
 };
 
+type CivilRow = {
+  vn: string;
+  hn: string;
+  serviceDate: string;
+  serviceTime: string;
+  cid: string;
+  patientName: string;
+  pttype: string;
+  pttypeName: string;
+  rightCode: 'OFC' | 'LGO';
+  hipdataCode: string;
+  serviceGroup: 'thai' | 'physical' | 'dental';
+  serviceLabel: string;
+  serviceItems: string;
+  totalAmount: number;
+};
+
+type CivilSummary = {
+  startDate: string;
+  endDate: string;
+  summary: {
+    totalVisits: number;
+    totalPatients: number;
+    totalAmount: number;
+    ofcVisits: number;
+    ofcAmount: number;
+    lgoVisits: number;
+    lgoAmount: number;
+  };
+  matrix: Array<{
+    key: CivilRow['serviceGroup'];
+    label: string;
+    total: number;
+    patients: number;
+    amount: number;
+    ofc: { visits: number; amount: number };
+    lgo: { visits: number; amount: number };
+  }>;
+  byDate: Array<{ date: string; ofc: number; lgo: number; total: number }>;
+  recent: CivilRow[];
+};
+
+type DrawerRow = Pick<TelemedRow, 'vn' | 'hn' | 'serviceDate' | 'serviceTime' | 'patientName' | 'hipdataCode' | 'totalAmount'> & {
+  claimAmount?: number;
+};
+
 const today = new Date().toISOString().slice(0, 10);
 
 const emptyData: TelemedSummary = {
@@ -99,6 +145,23 @@ const emptyData: TelemedSummary = {
   byDate: [],
   byRight: [],
   byHour: [],
+  recent: [],
+};
+
+const emptyCivilData: CivilSummary = {
+  startDate: today,
+  endDate: today,
+  summary: {
+    totalVisits: 0,
+    totalPatients: 0,
+    totalAmount: 0,
+    ofcVisits: 0,
+    ofcAmount: 0,
+    lgoVisits: 0,
+    lgoAmount: 0,
+  },
+  matrix: [],
+  byDate: [],
   recent: [],
 };
 
@@ -131,6 +194,7 @@ const fetchApi = async (path: string) => {
 };
 
 function App() {
+  const [page, setPage] = useState<'telemed' | 'civil'>('telemed');
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [data, setData] = useState<TelemedSummary>(emptyData);
@@ -198,13 +262,12 @@ function App() {
           <span>Command</span>
         </div>
         <nav>
-          <a className="active">Dashboard</a>
-          <a>Claims</a>
-          <a>Visit Detail</a>
-          <a>Readiness</a>
+          <button className={page === 'telemed' ? 'active' : ''} onClick={() => setPage('telemed')}>Telemed</button>
+          <button className={page === 'civil' ? 'active' : ''} onClick={() => setPage('civil')}>สิทธิ์ข้าราชการ</button>
         </nav>
       </aside>
 
+      {page === 'telemed' ? (
       <main className="dashboard">
         <header className="topbar">
           <div>
@@ -357,7 +420,200 @@ function App() {
           <DetailDrawer row={selected} detail={detail} loading={detailLoading} onClose={() => { setSelected(null); setDetail(null); }} />
         </section>
       </main>
+      ) : (
+        <CivilServiceMonitor />
+      )}
     </div>
+  );
+}
+
+function CivilServiceMonitor() {
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [rightFilter, setRightFilter] = useState<'ALL' | 'OFC' | 'LGO'>('ALL');
+  const [serviceFilter, setServiceFilter] = useState<'all' | CivilRow['serviceGroup']>('all');
+  const [data, setData] = useState<CivilSummary>(emptyCivilData);
+  const [selected, setSelected] = useState<CivilRow | null>(null);
+  const [detail, setDetail] = useState<VisitDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadData = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = new URLSearchParams({ startDate, endDate });
+      const json = await fetchApi(`/api/civil-service/summary?${query.toString()}`);
+      setData(json.data);
+      setSelected(null);
+      setDetail(null);
+    } catch (err) {
+      setData(emptyCivilData);
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openDetail = async (row: CivilRow) => {
+    setSelected(row);
+    setDetail(null);
+    setDetailLoading(true);
+    try {
+      const json = await fetchApi(`/api/telemed/visits/${encodeURIComponent(row.vn)}`);
+      setDetail(json.data);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  const filteredRows = useMemo(() => data.recent.filter((row) => (
+    (rightFilter === 'ALL' || row.rightCode === rightFilter)
+    && (serviceFilter === 'all' || row.serviceGroup === serviceFilter)
+  )), [data.recent, rightFilter, serviceFilter]);
+  const maxDaily = Math.max(...data.byDate.map((row) => row.total), 1);
+  const s = data.summary;
+
+  return (
+    <main className="dashboard civil-dashboard">
+      <header className="topbar">
+        <div>
+          <h1>Government Care Monitor</h1>
+          <p>ติดตามการรับบริการสิทธิ์ข้าราชการและองค์กรปกครองส่วนท้องถิ่น แยกแพทย์แผนไทย กายภาพบำบัด และทันตกรรม</p>
+          <div className="config-line civil-config">
+            <span>OFC ข้าราชการ</span>
+            <span>LGO อปท.</span>
+            <span>ข้อมูลจากใบสั่ง HOSxP</span>
+          </div>
+        </div>
+        <section className="filters">
+          <label>
+            <span>วันที่เริ่ม</span>
+            <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+          </label>
+          <label>
+            <span>วันที่สิ้นสุด</span>
+            <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+          </label>
+          <button onClick={loadData} disabled={loading}>{loading ? 'กำลังโหลด' : 'ดึงข้อมูล'}</button>
+        </section>
+      </header>
+
+      {error ? <div className="alert">{error}</div> : null}
+
+      <section className="civil-hero-metrics">
+        <article className="civil-total">
+          <span>บริการทั้งหมด</span>
+          <strong>{numberText(s.totalVisits)}</strong>
+          <small>{numberText(s.totalPatients)} คน | มูลค่า {money(s.totalAmount)}</small>
+        </article>
+        <article className="civil-right ofc">
+          <div><span>OFC</span><small>สิทธิ์ข้าราชการ</small></div>
+          <strong>{numberText(s.ofcVisits)} <em>visit</em></strong>
+          <b>{money(s.ofcAmount)}</b>
+        </article>
+        <article className="civil-right lgo">
+          <div><span>LGO</span><small>สิทธิ์ อปท.</small></div>
+          <strong>{numberText(s.lgoVisits)} <em>visit</em></strong>
+          <b>{money(s.lgoAmount)}</b>
+        </article>
+      </section>
+
+      <section className="civil-category-grid">
+        {data.matrix.map((row) => (
+          <button
+            type="button"
+            key={row.key}
+            className={`service-card ${row.key} ${serviceFilter === row.key ? 'selected' : ''}`}
+            onClick={() => setServiceFilter((current) => current === row.key ? 'all' : row.key)}
+          >
+            <div className="service-symbol">{row.key === 'thai' ? 'ท' : row.key === 'physical' ? 'ก' : 'ทฟ'}</div>
+            <div className="service-card-head"><strong>{row.label}</strong><span>{numberText(row.total)} visit</span></div>
+            <div className="service-split">
+              <div><span>OFC</span><strong>{numberText(row.ofc.visits)}</strong><small>{money(row.ofc.amount)}</small></div>
+              <div><span>LGO</span><strong>{numberText(row.lgo.visits)}</strong><small>{money(row.lgo.amount)}</small></div>
+            </div>
+            <footer><span>{numberText(row.patients)} คน</span><strong>{money(row.amount)}</strong></footer>
+          </button>
+        ))}
+      </section>
+
+      <section className="civil-overview">
+        <Panel title="แนวโน้มการรับบริการ" subtitle="เปรียบเทียบจำนวน visit ของ OFC และ LGO รายวัน" end={`${numberText(s.totalVisits)} visit`}>
+          <div className="civil-daily-chart">
+            {data.byDate.map((row) => (
+              <div className="civil-day" key={row.date}>
+                <span>{numberText(row.total)}</span>
+                <div className="civil-bars">
+                  <i className="ofc-bar" style={{ height: `${Math.max((row.ofc / maxDaily) * 170, row.ofc ? 5 : 0)}px` }} />
+                  <i className="lgo-bar" style={{ height: `${Math.max((row.lgo / maxDaily) * 170, row.lgo ? 5 : 0)}px` }} />
+                </div>
+                <small>{row.date.slice(5).replace('-', '/')}</small>
+              </div>
+            ))}
+            {data.byDate.length === 0 ? <Empty text="ไม่พบข้อมูลในช่วงวันที่เลือก" /> : null}
+          </div>
+          <div className="chart-legend"><span className="ofc-dot">OFC</span><span className="lgo-dot">LGO</span></div>
+        </Panel>
+
+        <Panel title="สัดส่วนตามบริการ" subtitle="จำนวน visit แยกตามหมวดหลัก">
+          <div className="civil-service-list">
+            {data.matrix.map((row) => (
+              <button key={row.key} onClick={() => setServiceFilter(row.key)}>
+                <span className={`service-color ${row.key}`} />
+                <div><strong>{row.label}</strong><small>{numberText(row.patients)} คน</small></div>
+                <b>{numberText(row.total)}</b>
+              </button>
+            ))}
+          </div>
+        </Panel>
+      </section>
+
+      <div className="civil-list-head">
+        <div>
+          <h2>รายการรับบริการ</h2>
+          <span>คลิกแต่ละรายการเพื่อดูรายละเอียดใบสั่ง</span>
+        </div>
+        <div className="segment-control">
+          {(['ALL', 'OFC', 'LGO'] as const).map((right) => (
+            <button key={right} className={rightFilter === right ? 'active' : ''} onClick={() => setRightFilter(right)}>
+              {right === 'ALL' ? 'ทั้งหมด' : right}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <section className="layout-main">
+        <Panel title="Visit ล่าสุด" subtitle={serviceFilter === 'all' ? 'ทุกหมวดบริการ' : data.matrix.find((row) => row.key === serviceFilter)?.label || ''} end={`${numberText(filteredRows.length)} รายการ`}>
+          <div className="table-wrap">
+            <table className="civil-table">
+              <thead><tr><th>วันที่ / VN</th><th>ผู้รับบริการ</th><th>สิทธิ์</th><th>หมวดบริการ</th><th className="right">มูลค่า</th><th>รายละเอียด</th></tr></thead>
+              <tbody>
+                {filteredRows.map((row) => (
+                  <tr key={row.vn} className={selected?.vn === row.vn ? 'selected' : ''} onClick={() => void openDetail(row)}>
+                    <td><strong>{row.serviceDate} {row.serviceTime}</strong><span>VN {row.vn} | HN {row.hn}</span></td>
+                    <td><strong>{row.patientName || '-'}</strong><span>{row.cid || '-'}</span></td>
+                    <td><span className={`right-badge ${row.rightCode.toLowerCase()}`}>{row.rightCode}</span><small>{row.pttypeName}</small></td>
+                    <td><strong>{row.serviceLabel}</strong><span>{row.serviceItems || '-'}</span></td>
+                    <td className="right money">{money(row.totalAmount)}</td>
+                    <td><button className="detail-btn" type="button">เปิดใบสั่ง</button></td>
+                  </tr>
+                ))}
+                {filteredRows.length === 0 ? <tr><td colSpan={6} className="empty-cell">ไม่พบรายการตามตัวกรอง</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+        <DetailDrawer row={selected} detail={detail} loading={detailLoading} mode="civil" onClose={() => { setSelected(null); setDetail(null); }} />
+      </section>
+    </main>
   );
 }
 
@@ -383,19 +639,19 @@ function Panel({ title, subtitle, end, children }: { title: string; subtitle: st
   );
 }
 
-function DetailDrawer({ row, detail, loading, onClose }: { row: TelemedRow | null; detail: VisitDetail | null; loading: boolean; onClose: () => void }) {
+function DetailDrawer({ row, detail, loading, onClose, mode = 'telemed' }: { row: DrawerRow | null; detail: VisitDetail | null; loading: boolean; onClose: () => void; mode?: 'telemed' | 'civil' }) {
   if (!row) {
     return (
       <aside className="detail-drawer detail-empty">
         <div className="drawer-orbit">Rx</div>
         <h2>รายละเอียดใบสั่งยา</h2>
-        <p>เลือก visit จากตารางเพื่อดูรายการค่าบริการ ยา และ ADP Telemed ของแต่ละรายการ</p>
+        <p>{mode === 'civil' ? 'เลือก visit จากตารางเพื่อดูรายการค่าบริการและใบสั่งของผู้รับบริการ' : 'เลือก visit จากตารางเพื่อดูรายการค่าบริการ ยา และ ADP Telemed ของแต่ละรายการ'}</p>
       </aside>
     );
   }
 
   const totalItems = detail?.items.reduce((sum, item) => sum + item.amount, 0) || row.totalAmount;
-  const claimAmount = detail?.visit.claimAmount ?? row.claimAmount;
+  const claimAmount = detail?.visit.claimAmount ?? row.claimAmount ?? 0;
 
   return (
     <aside className="detail-drawer">
@@ -411,7 +667,7 @@ function DetailDrawer({ row, detail, loading, onClose }: { row: TelemedRow | nul
       <div className="drawer-summary">
         <div><span>วันที่</span><strong>{row.serviceDate} {row.serviceTime}</strong></div>
         <div><span>สิทธิ์</span><strong>{row.hipdataCode || '-'}</strong></div>
-        <div><span>เบิก สปสช.</span><strong>{money(claimAmount)}</strong></div>
+        {mode === 'telemed' ? <div><span>เบิก สปสช.</span><strong>{money(claimAmount)}</strong></div> : null}
         <div><span>ยอดค่าบริการรวม</span><strong>{money(totalItems)}</strong></div>
       </div>
 

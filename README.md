@@ -2,6 +2,15 @@
 
 ระบบ dashboard แยกสำหรับผู้บริหาร ใช้ดูภาพรวมบริการ Telemed จากฐานข้อมูล HOSxP โดยอ้างอิงเงื่อนไข select เดิมจาก `fdh_rect`
 
+ภายในระบบมีหน้าจอ `Government Care Monitor` สำหรับติดตามสิทธิ์ข้าราชการ โดยแยก:
+
+- สิทธิ์ `OFC` และ `LGO`
+- บริการแพทย์แผนไทย
+- บริการกายภาพบำบัด
+- บริการทันตกรรม
+
+การจัดหมวดบริการตรวจจากชื่อรายการค่าบริการและหมวดรายได้ในใบสั่ง HOSxP ของแต่ละ visit
+
 - Frontend: React + Vite
 - Backend: Express + MySQL
 - Default frontend port: `3517`
@@ -134,6 +143,7 @@ http://192.168.2.202:3517
 ```bash
 curl "http://localhost:3516/api/health"
 curl "http://localhost:3516/api/telemed/summary"
+curl "http://localhost:3516/api/civil-service/summary"
 ```
 
 ## รันด้วย PM2

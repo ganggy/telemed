@@ -365,6 +365,162 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
   }
 };
 
+const CIVIL_SERVICE_CASE_SQL = `
+  CASE
+    WHEN EXISTS (
+      SELECT 1
+      FROM opitemrece oi
+      LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
+      LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
+      LEFT JOIN income inc ON inc.income = oi.income
+      WHERE oi.vn = o.vn
+        AND CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, ''))
+          REGEXP 'แพทย์แผนไทย|แผนไทย|สมุนไพร|นวดไทย|ประคบ|อบสมุนไพร'
+    ) THEN 'thai'
+    WHEN EXISTS (
+      SELECT 1
+      FROM opitemrece oi
+      LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
+      LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
+      LEFT JOIN income inc ON inc.income = oi.income
+      WHERE oi.vn = o.vn
+        AND LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
+          REGEXP 'กายภาพ|เวชศาสตร์ฟื้นฟู|ฟื้นฟูสมรรถภาพ|physio'
+    ) THEN 'physical'
+    WHEN EXISTS (
+      SELECT 1
+      FROM opitemrece oi
+      LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
+      LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
+      LEFT JOIN income inc ON inc.income = oi.income
+      WHERE oi.vn = o.vn
+        AND LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
+          REGEXP 'ทันต|dental|ถอนฟัน|อุดฟัน|ขูดหินปูน'
+    ) THEN 'dental'
+    ELSE ''
+  END
+`;
+
+const getCivilServiceSummary = async (start: string, end: string) => {
+  const connection = await getConnection();
+  try {
+    const [rows] = await connection.query(
+      `
+      SELECT *
+      FROM (
+        SELECT
+          o.vn,
+          o.hn,
+          DATE_FORMAT(o.vstdate, '%Y-%m-%d') AS serviceDate,
+          DATE_FORMAT(o.vsttime, '%H:%i') AS serviceTime,
+          pt.cid,
+          CONCAT(COALESCE(pt.pname, ''), COALESCE(pt.fname, ''), ' ', COALESCE(pt.lname, '')) AS patientName,
+          o.pttype,
+          COALESCE(ptt.name, '') AS pttypeName,
+          UPPER(COALESCE(ptt.hipdata_code, '')) AS rightCode,
+          ${CIVIL_SERVICE_CASE_SQL} AS serviceGroup,
+          COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount,
+          COALESCE((
+            SELECT GROUP_CONCAT(DISTINCT COALESCE(sd.name, ndi.name, oi.icode) ORDER BY COALESCE(sd.name, ndi.name, oi.icode) SEPARATOR ', ')
+            FROM opitemrece oi
+            LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
+            LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
+            LEFT JOIN income inc ON inc.income = oi.income
+            WHERE oi.vn = o.vn
+              AND LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
+                REGEXP 'แพทย์แผนไทย|แผนไทย|สมุนไพร|นวดไทย|ประคบ|อบสมุนไพร|กายภาพ|เวชศาสตร์ฟื้นฟู|ฟื้นฟูสมรรถภาพ|physio|ทันต|dental|ถอนฟัน|อุดฟัน|ขูดหินปูน'
+          ), '') AS serviceItems
+        FROM ovst o
+        JOIN pttype ptt ON ptt.pttype = o.pttype
+        LEFT JOIN patient pt ON pt.hn = o.hn
+        WHERE o.vstdate BETWEEN ? AND ?
+          AND UPPER(COALESCE(ptt.hipdata_code, '')) IN ('OFC', 'LGO')
+      ) civil
+      WHERE civil.serviceGroup <> ''
+      ORDER BY civil.serviceDate DESC, civil.serviceTime DESC, civil.vn DESC
+      LIMIT 20000
+      `,
+      [start, end]
+    );
+
+    const labels: Record<string, string> = {
+      thai: 'แพทย์แผนไทย',
+      physical: 'กายภาพบำบัด',
+      dental: 'ทันตกรรม',
+    };
+    const detailRows = (Array.isArray(rows) ? rows : []).map((row: any) => ({
+      vn: toText(row.vn),
+      hn: toText(row.hn),
+      serviceDate: toText(row.serviceDate),
+      serviceTime: toText(row.serviceTime),
+      cid: toText(row.cid),
+      patientName: toText(row.patientName),
+      pttype: toText(row.pttype),
+      pttypeName: toText(row.pttypeName),
+      rightCode: toText(row.rightCode),
+      hipdataCode: toText(row.rightCode),
+      serviceGroup: toText(row.serviceGroup),
+      serviceLabel: labels[toText(row.serviceGroup)] || 'ไม่ระบุ',
+      serviceItems: toText(row.serviceItems),
+      totalAmount: toNumber(row.totalAmount),
+    }));
+
+    const categories = ['thai', 'physical', 'dental'];
+    const matrix = categories.map((key) => {
+      const categoryRows = detailRows.filter((row) => row.serviceGroup === key);
+      const ofcRows = categoryRows.filter((row) => row.rightCode === 'OFC');
+      const lgoRows = categoryRows.filter((row) => row.rightCode === 'LGO');
+      return {
+        key,
+        label: labels[key],
+        total: categoryRows.length,
+        patients: new Set(categoryRows.map((row) => row.hn).filter(Boolean)).size,
+        amount: Number(categoryRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+        ofc: {
+          visits: ofcRows.length,
+          amount: Number(ofcRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+        },
+        lgo: {
+          visits: lgoRows.length,
+          amount: Number(lgoRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+        },
+      };
+    });
+
+    const byDate = new Map<string, { date: string; ofc: number; lgo: number; total: number }>();
+    detailRows.forEach((row) => {
+      const day = byDate.get(row.serviceDate) || { date: row.serviceDate, ofc: 0, lgo: 0, total: 0 };
+      if (row.rightCode === 'OFC') day.ofc += 1;
+      if (row.rightCode === 'LGO') day.lgo += 1;
+      day.total += 1;
+      byDate.set(row.serviceDate, day);
+    });
+
+    const ofcRows = detailRows.filter((row) => row.rightCode === 'OFC');
+    const lgoRows = detailRows.filter((row) => row.rightCode === 'LGO');
+    const totalAmount = detailRows.reduce((sum, row) => sum + row.totalAmount, 0);
+
+    return {
+      startDate: start,
+      endDate: end,
+      summary: {
+        totalVisits: detailRows.length,
+        totalPatients: new Set(detailRows.map((row) => row.hn).filter(Boolean)).size,
+        totalAmount: Number(totalAmount.toFixed(2)),
+        ofcVisits: ofcRows.length,
+        ofcAmount: Number(ofcRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+        lgoVisits: lgoRows.length,
+        lgoAmount: Number(lgoRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+      },
+      matrix,
+      byDate: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+      recent: detailRows.slice(0, 100),
+    };
+  } finally {
+    connection.release();
+  }
+};
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -402,6 +558,19 @@ app.get('/api/telemed/visits/:vn', async (req, res) => {
   } catch (error) {
     console.error('GET /api/telemed/visits/:vn error:', error);
     return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'โหลดรายละเอียด Visit ไม่สำเร็จ' });
+  }
+});
+
+app.get('/api/civil-service/summary', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = toDateText(req.query.startDate, today);
+    const endDate = toDateText(req.query.endDate, startDate);
+    const data = await getCivilServiceSummary(startDate, endDate);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('GET /api/civil-service/summary error:', error);
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'โหลดข้อมูลสิทธิ์ข้าราชการไม่สำเร็จ' });
   }
 });
 
