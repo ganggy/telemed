@@ -471,6 +471,32 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
   font-weight: 900;
 }
 
+.civil-view-tabs {
+  display: flex;
+  width: fit-content;
+  margin: 0 0 16px;
+  padding: 4px;
+  border: 1px solid #cfe1e9;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 30px rgba(14, 116, 144, 0.08);
+}
+.civil-view-tabs button {
+  min-height: 38px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #527487;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+.civil-view-tabs button.active {
+  background: #10394e;
+  color: #fff;
+}
+
 .civil-hero-metrics {
   display: grid;
   grid-template-columns: 1.25fr 1fr 1fr;
@@ -668,6 +694,7 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .right-badge.ofc { background: #dbeafe; color: #1d4ed8; }
 .right-badge.lgo { background: #ffedd5; color: #c2410c; }
 .civil-table { min-width: 900px; }
+.staff-line { color: #0f7895; font-weight: 900; }
 
 .target-modal-backdrop {
   position: fixed;
@@ -770,6 +797,8 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
   .detail-drawer { padding: 14px; }
   .kpi-grid { gap: 10px; }
   .civil-list-head { align-items: stretch; flex-direction: column; }
+  .civil-view-tabs { width: 100%; }
+  .civil-view-tabs button { flex: 1; padding: 0 8px; }
   .segment-control button { flex: 1; min-width: 0; }
   .target-modal-backdrop { padding: 8px; }
   .target-modal { max-height: calc(100vh - 16px); }

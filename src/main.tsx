@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from 'react';
+import { StrictMode, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
@@ -91,6 +91,9 @@ type CivilRow = {
   serviceLabel: string;
   serviceItems: string;
   totalAmount: number;
+  isHospitalStaff: boolean;
+  staffName: string;
+  staffDepartment: string;
 };
 
 type CivilSummary = {
@@ -458,6 +461,8 @@ function App() {
 }
 
 function CivilServiceMonitor() {
+  const loadRequestRef = useRef(0);
+  const [scope, setScope] = useState<'all' | 'staff'>('all');
   const [startDate, setStartDate] = useState(currentMonthStart);
   const [endDate, setEndDate] = useState(today);
   const [rightFilter, setRightFilter] = useState<'ALL' | 'OFC' | 'LGO'>('ALL');
@@ -473,27 +478,39 @@ function CivilServiceMonitor() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const loadData = async () => {
+  const loadData = async (scopeOverride: 'all' | 'staff' = scope) => {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     setError('');
     try {
       const query = new URLSearchParams({ startDate, endDate });
+      if (scopeOverride === 'staff') query.set('staffOnly', '1');
       const month = startDate.slice(0, 7);
       const [summaryJson, targetsJson] = await Promise.all([
         fetchApi(`/api/civil-service/summary?${query.toString()}`),
         fetchApi(`/api/civil-service/targets?month=${encodeURIComponent(month)}`),
       ]);
+      if (requestId !== loadRequestRef.current) return;
       setData(summaryJson.data);
       setTargets(targetsJson.data);
       setTargetDraft(targetsJson.data);
       setSelected(null);
       setDetail(null);
     } catch (err) {
+      if (requestId !== loadRequestRef.current) return;
       setData(emptyCivilData);
       setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
+  };
+
+  const switchScope = (nextScope: 'all' | 'staff') => {
+    if (nextScope === scope) return;
+    setScope(nextScope);
+    setSelected(null);
+    setDetail(null);
+    void loadData(nextScope);
   };
 
   const openTargets = () => {
@@ -571,12 +588,12 @@ function CivilServiceMonitor() {
       <header className="topbar">
         <div>
           <h1>Government Care Monitor</h1>
-          <p>ติดตามการรับบริการสิทธิ์ข้าราชการและองค์กรปกครองส่วนท้องถิ่น แยกแพทย์แผนไทย กายภาพบำบัด และทันตกรรม</p>
+          <p>{scope === 'staff' ? 'ติดตามการรับบริการของข้าราชการที่เป็นเจ้าหน้าที่โรงพยาบาล โดยตรวจเลขบัตรประชาชนตรงกับบัญชี opduser' : 'ติดตามการรับบริการสิทธิ์ข้าราชการและองค์กรปกครองส่วนท้องถิ่น แยกแพทย์แผนไทย กายภาพบำบัด และทันตกรรม'}</p>
           <div className="config-line civil-config">
             <span>OFC ข้าราชการ</span>
             <span>LGO อปท.</span>
             <span>ข้อมูลจากใบสั่ง HOSxP</span>
-            <button type="button" className="target-settings-btn" onClick={openTargets}>ตั้งเป้าหมายรายเดือน</button>
+            {scope === 'all' ? <button type="button" className="target-settings-btn" onClick={openTargets}>ตั้งเป้าหมายรายเดือน</button> : null}
           </div>
         </div>
         <section className="filters">
@@ -588,15 +605,20 @@ function CivilServiceMonitor() {
             <span>วันที่สิ้นสุด</span>
             <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
           </label>
-          <button onClick={loadData} disabled={loading}>{loading ? 'กำลังโหลด' : 'ดึงข้อมูล'}</button>
+          <button onClick={() => void loadData()} disabled={loading}>{loading ? 'กำลังโหลด' : 'ดึงข้อมูล'}</button>
         </section>
       </header>
+
+      <div className="civil-view-tabs" role="tablist" aria-label="มุมมองสิทธิ์ข้าราชการ">
+        <button type="button" role="tab" aria-selected={scope === 'all'} className={scope === 'all' ? 'active' : ''} onClick={() => switchScope('all')}>ภาพรวมข้าราชการ</button>
+        <button type="button" role="tab" aria-selected={scope === 'staff'} className={scope === 'staff' ? 'active' : ''} onClick={() => switchScope('staff')}>ข้าราชการในโรงพยาบาล</button>
+      </div>
 
       {error ? <div className="alert">{error}</div> : null}
 
       <section className="civil-hero-metrics">
         <article className="civil-total">
-          <span>บริการทั้งหมด</span>
+          <span>{scope === 'staff' ? 'บริการเจ้าหน้าที่ รพ.' : 'บริการทั้งหมด'}</span>
           <strong>{numberText(s.totalVisits)}</strong>
           <small>{numberText(s.totalPatients)} คน | มูลค่า {money(s.totalAmount)}</small>
         </article>
@@ -626,11 +648,11 @@ function CivilServiceMonitor() {
             <div className="service-split">
               <div>
                 <span>OFC</span><strong>{numberText(row.ofc.visits)}</strong><small>{money(row.ofc.amount)}</small>
-                <TargetProgress target={targets.targets[`${row.key}:OFC`]} visits={row.ofc.visits} amount={row.ofc.amount} />
+                {scope === 'all' ? <TargetProgress target={targets.targets[`${row.key}:OFC`]} visits={row.ofc.visits} amount={row.ofc.amount} /> : null}
               </div>
               <div>
                 <span>LGO</span><strong>{numberText(row.lgo.visits)}</strong><small>{money(row.lgo.amount)}</small>
-                <TargetProgress target={targets.targets[`${row.key}:LGO`]} visits={row.lgo.visits} amount={row.lgo.amount} />
+                {scope === 'all' ? <TargetProgress target={targets.targets[`${row.key}:LGO`]} visits={row.lgo.visits} amount={row.lgo.amount} /> : null}
               </div>
             </div>
             <footer><span>{numberText(row.patients)} คน</span><strong>{money(row.amount)}</strong></footer>
@@ -693,7 +715,11 @@ function CivilServiceMonitor() {
                 {filteredRows.map((row) => (
                   <tr key={row.vn} className={selected?.vn === row.vn ? 'selected' : ''} onClick={() => void openDetail(row)}>
                     <td><strong>{row.serviceDate} {row.serviceTime}</strong><span>VN {row.vn} | HN {row.hn}</span></td>
-                    <td><strong>{row.patientName || '-'}</strong><span>{row.cid || '-'}</span></td>
+                    <td>
+                      <strong>{row.patientName || '-'}</strong>
+                      <span>{row.cid || '-'}</span>
+                      {row.isHospitalStaff ? <small className="staff-line">เจ้าหน้าที่ รพ. {row.staffName || ''}{row.staffDepartment ? ` | ${row.staffDepartment}` : ''}</small> : null}
+                    </td>
                     <td><span className={`right-badge ${row.rightCode.toLowerCase()}`}>{row.rightCode}</span><small>{row.pttypeName}</small></td>
                     <td><strong>{row.serviceLabel}</strong><span>{row.serviceItems || '-'}</span></td>
                     <td className="right money">{money(row.totalAmount)}</td>

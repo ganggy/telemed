@@ -413,8 +413,9 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
   }
 };
 
-const getCivilServiceSummary = async (start: string, end: string) => {
+const getCivilServiceSummary = async (start: string, end: string, staffOnly = false) => {
   const connection = await getConnection();
+  const staffFilterSql = staffOnly ? `AND staff.cid IS NOT NULL` : '';
   try {
     const [rows] = await connection.query(
       `
@@ -430,6 +431,9 @@ const getCivilServiceSummary = async (start: string, end: string) => {
           o.pttype,
           COALESCE(ptt.name, '') AS pttypeName,
           UPPER(COALESCE(ptt.hipdata_code, '')) AS rightCode,
+          CASE WHEN staff.cid IS NOT NULL THEN 1 ELSE 0 END AS isHospitalStaff,
+          COALESCE(staff.name, '') AS staffName,
+          COALESCE(staff.department, '') AS staffDepartment,
           CASE
             WHEN MAX(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, ''))
               REGEXP 'แพทย์แผนไทย|แผนไทย|สมุนไพร|นวดไทย|ประคบ|อบสมุนไพร') = 1 THEN 'thai'
@@ -448,12 +452,19 @@ const getCivilServiceSummary = async (start: string, end: string) => {
         FROM ovst o
         JOIN pttype ptt ON ptt.pttype = o.pttype
         LEFT JOIN patient pt ON pt.hn = o.hn
+        LEFT JOIN (
+          SELECT TRIM(cid) AS cid, MAX(name) AS name, MAX(department) AS department
+          FROM opduser
+          WHERE COALESCE(TRIM(cid), '') <> ''
+          GROUP BY TRIM(cid)
+        ) staff ON staff.cid = TRIM(pt.cid)
         JOIN opitemrece oi ON oi.vn = o.vn
         LEFT JOIN s_drugitems sd ON sd.icode = oi.icode
         LEFT JOIN nondrugitems ndi ON ndi.icode = oi.icode
         LEFT JOIN income inc ON inc.income = oi.income
         WHERE o.vstdate BETWEEN ? AND ?
           AND UPPER(COALESCE(ptt.hipdata_code, '')) IN ('OFC', 'LGO')
+          ${staffFilterSql}
         GROUP BY o.vn
       ) civil
       WHERE civil.serviceGroup <> ''
@@ -483,6 +494,9 @@ const getCivilServiceSummary = async (start: string, end: string) => {
       serviceLabel: labels[toText(row.serviceGroup)] || 'ไม่ระบุ',
       serviceItems: toText(row.serviceItems),
       totalAmount: toNumber(row.totalAmount),
+      isHospitalStaff: toNumber(row.isHospitalStaff) === 1,
+      staffName: toText(row.staffName),
+      staffDepartment: toText(row.staffDepartment),
     }));
 
     const categories = ['thai', 'physical', 'dental'];
@@ -586,7 +600,8 @@ app.get('/api/civil-service/summary', async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const startDate = toDateText(req.query.startDate, today);
     const endDate = toDateText(req.query.endDate, startDate);
-    const data = await getCivilServiceSummary(startDate, endDate);
+    const staffOnly = String(req.query.staffOnly || '') === '1';
+    const data = await getCivilServiceSummary(startDate, endDate, staffOnly);
     res.json({ success: true, data });
   } catch (error) {
     console.error('GET /api/civil-service/summary error:', error);
