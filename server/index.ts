@@ -453,9 +453,10 @@ const getCivilServiceSummary = async (start: string, end: string, staffOnly = fa
         JOIN pttype ptt ON ptt.pttype = o.pttype
         LEFT JOIN patient pt ON pt.hn = o.hn
         LEFT JOIN (
-          SELECT TRIM(cid) AS cid, MAX(name) AS name, MAX(department) AS department
-          FROM opduser
+          SELECT TRIM(cid) AS cid, MAX(name) AS name, '' AS department
+          FROM doctor
           WHERE COALESCE(TRIM(cid), '') <> ''
+            AND UPPER(COALESCE(Active, '')) = 'Y'
           GROUP BY TRIM(cid)
         ) staff ON staff.cid = TRIM(pt.cid)
         JOIN opitemrece oi ON oi.vn = o.vn
