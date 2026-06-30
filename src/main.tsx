@@ -289,10 +289,10 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="brand-rail">
-        <div className="brand-mark">TM</div>
+        <div className="brand-mark">HCC</div>
         <div>
-          <strong>Telemed</strong>
-          <span>Command</span>
+          <strong>Hospital Claim</strong>
+          <span>Command Center</span>
         </div>
         <nav>
           <button className={page === 'telemed' ? 'active' : ''} onClick={() => setPage('telemed')}>Telemed</button>
@@ -305,7 +305,7 @@ function App() {
         <header className="topbar">
           <div>
             <h1>Telemed Command Center</h1>
-            <p>ระบบแยกสำหรับผู้บริหาร ใช้ดูภาพรวมบริการ Telemed จาก HOSxP พร้อมคลิกดูรายละเอียดใบสั่งยาและรายการค่าบริการต่อ visit</p>
+            <p>โมดูลติดตามบริการ Telemed ภายใน Hospital Claim Command Center ใช้ดูภาพรวมจาก HOSxP พร้อมคลิกดูรายละเอียดใบสั่งยาและรายการค่าบริการต่อ visit</p>
             <div className="config-line">
               <span>ADP {data.config.telemedAdpCode || '-'}</span>
               <span>Visit export {data.config.telemedExportCode || '-'}</span>

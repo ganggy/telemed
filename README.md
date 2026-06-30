@@ -1,8 +1,11 @@
-# Telemed Executive Dashboard
+# Hospital Claim Command Center
 
-ระบบ dashboard แยกสำหรับผู้บริหาร ใช้ดูภาพรวมบริการ Telemed จากฐานข้อมูล HOSxP โดยอ้างอิงเงื่อนไข select เดิมจาก `fdh_rect`
+ระบบ dashboard แยกสำหรับผู้บริหาร ใช้เป็นศูนย์ติดตามบริการและการเบิกโรงพยาบาลจากฐานข้อมูล HOSxP โดยเริ่มจากโมดูล Telemed และสิทธิ์ข้าราชการ พร้อมรองรับการเพิ่ม monitor หมวดอื่นในอนาคต
 
-ภายในระบบมีหน้าจอ `Government Care Monitor` สำหรับติดตามสิทธิ์ข้าราชการ โดยแยก:
+ภายในระบบมีโมดูลหลัก:
+
+- `Telemed Command Center` สำหรับติดตามบริการ Telemed และยอดเบิก สปสช.
+- `Government Care Monitor` สำหรับติดตามสิทธิ์ข้าราชการ โดยแยก:
 
 - สิทธิ์ `OFC` และ `LGO`
 - บริการแพทย์แผนไทย
