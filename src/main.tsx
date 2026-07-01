@@ -87,7 +87,7 @@ type CivilRow = {
   pttypeName: string;
   rightCode: 'OFC' | 'LGO';
   hipdataCode: string;
-  serviceGroup: 'thai' | 'physical' | 'dental';
+  serviceGroup: 'thai' | 'physical' | 'dental' | 'emergency' | 'outpatient';
   serviceLabel: string;
   serviceItems: string;
   totalAmount: number;
@@ -186,6 +186,8 @@ const serviceMeta = [
   { key: 'thai', label: 'แพทย์แผนไทย' },
   { key: 'physical', label: 'กายภาพบำบัด' },
   { key: 'dental', label: 'ทันตกรรม' },
+  { key: 'emergency', label: 'อุบัติเหตุฉุกเฉิน' },
+  { key: 'outpatient', label: 'ผู้ป่วยนอก' },
 ] as const;
 const rightMeta = ['OFC', 'LGO'] as const;
 
@@ -588,7 +590,7 @@ function CivilServiceMonitor() {
       <header className="topbar">
         <div>
           <h1>Government Care Monitor</h1>
-          <p>{scope === 'staff' ? 'ติดตามการรับบริการของข้าราชการที่เป็นบุคลากรโรงพยาบาล โดยตรวจเลขบัตรประชาชนตรงกับตาราง doctor ที่ Active=Y' : 'ติดตามการรับบริการสิทธิ์ข้าราชการและองค์กรปกครองส่วนท้องถิ่น แยกแพทย์แผนไทย กายภาพบำบัด และทันตกรรม'}</p>
+          <p>{scope === 'staff' ? 'ติดตามการรับบริการของข้าราชการที่เป็นบุคลากรโรงพยาบาล โดยตรวจเลขบัตรประชาชนตรงกับตาราง doctor ที่ Active=Y' : 'ติดตามการรับบริการสิทธิ์ข้าราชการและองค์กรปกครองส่วนท้องถิ่น แยกตามจุดรับบริการ 5 หมวด'}</p>
           <div className="config-line civil-config">
             <span>OFC ข้าราชการ</span>
             <span>LGO อปท.</span>
@@ -643,7 +645,7 @@ function CivilServiceMonitor() {
             className={`service-card ${row.key} ${serviceFilter === row.key ? 'selected' : ''}`}
             onClick={() => setServiceFilter((current) => current === row.key ? 'all' : row.key)}
           >
-            <div className="service-symbol">{row.key === 'thai' ? 'ท' : row.key === 'physical' ? 'ก' : 'ทฟ'}</div>
+            <div className="service-symbol">{row.key === 'thai' ? 'ท' : row.key === 'physical' ? 'ก' : row.key === 'dental' ? 'ทฟ' : row.key === 'emergency' ? 'ER' : 'OPD'}</div>
             <div className="service-card-head"><strong>{row.label}</strong><span>{numberText(row.total)} visit</span></div>
             <div className="service-split">
               <div>
