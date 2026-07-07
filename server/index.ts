@@ -30,6 +30,16 @@ const CIVIL_TARGETS_PATH = path.resolve(process.cwd(), 'data', 'civil-service-ta
 const CIVIL_SERVICE_KEYS = ['thai', 'physical', 'dental', 'emergency', 'outpatient'] as const;
 const CIVIL_RIGHT_KEYS = ['OFC', 'LGO'] as const;
 const DEFAULT_CIVIL_VISIT_TARGET = 120;
+type CivilServiceGroup = typeof CIVIL_SERVICE_KEYS[number];
+type CivilRightKey = typeof CIVIL_RIGHT_KEYS[number];
+
+const CIVIL_SERVICE_LABELS: Record<CivilServiceGroup, string> = {
+  thai: 'แพทย์แผนไทย',
+  physical: 'กายภาพบำบัด',
+  dental: 'ทันตกรรม',
+  emergency: 'อุบัติเหตุฉุกเฉิน',
+  outpatient: 'ผู้ป่วยนอก',
+};
 
 const pool = mysql.createPool({
   host: process.env.HOSXP_HOST,
@@ -104,6 +114,26 @@ const writeCivilTargetsForMonth = (month: string, targets: Record<string, CivilT
   allTargets[month] = targets;
   fs.mkdirSync(path.dirname(CIVIL_TARGETS_PATH), { recursive: true });
   fs.writeFileSync(CIVIL_TARGETS_PATH, `${JSON.stringify(allTargets, null, 2)}\n`, 'utf8');
+};
+
+const isCivilServiceGroup = (value: string): value is CivilServiceGroup => (
+  (CIVIL_SERVICE_KEYS as readonly string[]).includes(value)
+);
+
+const isCivilRightKey = (value: string): value is CivilRightKey => (
+  (CIVIL_RIGHT_KEYS as readonly string[]).includes(value)
+);
+
+const csvValue = (value: unknown) => {
+  const text = String(value ?? '').replace(/\r?\n/g, ' ').trim();
+  return /[",]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+const sendCsv = (res: express.Response, filename: string, rows: unknown[][]) => {
+  const body = rows.map((row) => row.map(csvValue).join(',')).join('\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(`\uFEFF${body}\n`);
 };
 
 const buildTelemedExistsSql = (visitAlias: string, ovstistAlias: string) => `
@@ -413,7 +443,7 @@ const getTelemedDashboardSummary = async (start: string, end: string) => {
   }
 };
 
-const getCivilServiceSummary = async (start: string, end: string, staffOnly = false) => {
+const getCivilServiceRows = async (start: string, end: string, staffOnly = false) => {
   const connection = await getConnection();
   const staffFilterSql = staffOnly ? `AND staff.cid IS NOT NULL` : '';
   try {
@@ -452,7 +482,7 @@ const getCivilServiceSummary = async (start: string, end: string, staffOnly = fa
         FROM ovst o
         JOIN pttype ptt ON ptt.pttype = o.pttype
         LEFT JOIN patient pt ON pt.hn = o.hn
-        LEFT JOIN er_regist er ON er.vn = o.vn
+        LEFT JOIN (SELECT DISTINCT vn FROM er_regist) er ON er.vn = o.vn
         LEFT JOIN (
           SELECT TRIM(cid) AS cid, MAX(name) AS name, '' AS department
           FROM doctor
@@ -475,91 +505,92 @@ const getCivilServiceSummary = async (start: string, end: string, staffOnly = fa
       [start, end]
     );
 
-    const labels: Record<string, string> = {
-      thai: 'แพทย์แผนไทย',
-      physical: 'กายภาพบำบัด',
-      dental: 'ทันตกรรม',
-      emergency: 'อุบัติเหตุฉุกเฉิน',
-      outpatient: 'ผู้ป่วยนอก',
-    };
-    const detailRows = (Array.isArray(rows) ? rows : []).map((row: any) => ({
-      vn: toText(row.vn),
-      hn: toText(row.hn),
-      serviceDate: toText(row.serviceDate),
-      serviceTime: toText(row.serviceTime),
-      cid: toText(row.cid),
-      patientName: toText(row.patientName),
-      pttype: toText(row.pttype),
-      pttypeName: toText(row.pttypeName),
-      rightCode: toText(row.rightCode),
-      hipdataCode: toText(row.rightCode),
-      serviceGroup: toText(row.serviceGroup),
-      serviceLabel: labels[toText(row.serviceGroup)] || 'ไม่ระบุ',
-      serviceItems: toText(row.serviceItems),
-      totalAmount: toNumber(row.totalAmount),
-      isHospitalStaff: toNumber(row.isHospitalStaff) === 1,
-      staffName: toText(row.staffName),
-      staffDepartment: toText(row.staffDepartment),
-    }));
-
-    const categories = [...CIVIL_SERVICE_KEYS];
-    const matrix = categories.map((key) => {
-      const categoryRows = detailRows.filter((row) => row.serviceGroup === key);
-      const ofcRows = categoryRows.filter((row) => row.rightCode === 'OFC');
-      const lgoRows = categoryRows.filter((row) => row.rightCode === 'LGO');
+    return (Array.isArray(rows) ? rows : []).map((row: any) => {
+      const serviceGroup = isCivilServiceGroup(toText(row.serviceGroup)) ? toText(row.serviceGroup) as CivilServiceGroup : 'outpatient';
+      const rightCode = isCivilRightKey(toText(row.rightCode)) ? toText(row.rightCode) as CivilRightKey : 'OFC';
       return {
-        key,
-        label: labels[key],
-        total: categoryRows.length,
-        patients: new Set(categoryRows.map((row) => row.hn).filter(Boolean)).size,
-        amount: Number(categoryRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
-        ofc: {
-          visits: ofcRows.length,
-          amount: Number(ofcRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
-        },
-        lgo: {
-          visits: lgoRows.length,
-          amount: Number(lgoRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
-        },
+        vn: toText(row.vn),
+        hn: toText(row.hn),
+        serviceDate: toText(row.serviceDate),
+        serviceTime: toText(row.serviceTime),
+        cid: toText(row.cid),
+        patientName: toText(row.patientName),
+        pttype: toText(row.pttype),
+        pttypeName: toText(row.pttypeName),
+        rightCode,
+        hipdataCode: rightCode,
+        serviceGroup,
+        serviceLabel: CIVIL_SERVICE_LABELS[serviceGroup] || 'ไม่ระบุ',
+        serviceItems: toText(row.serviceItems),
+        totalAmount: toNumber(row.totalAmount),
+        isHospitalStaff: toNumber(row.isHospitalStaff) === 1,
+        staffName: toText(row.staffName),
+        staffDepartment: toText(row.staffDepartment),
       };
     });
-
-    const byDate = new Map<string, { date: string; ofc: number; lgo: number; total: number }>();
-    detailRows.forEach((row) => {
-      const day = byDate.get(row.serviceDate) || { date: row.serviceDate, ofc: 0, lgo: 0, total: 0 };
-      if (row.rightCode === 'OFC') day.ofc += 1;
-      if (row.rightCode === 'LGO') day.lgo += 1;
-      day.total += 1;
-      byDate.set(row.serviceDate, day);
-    });
-
-    const ofcRows = detailRows.filter((row) => row.rightCode === 'OFC');
-    const lgoRows = detailRows.filter((row) => row.rightCode === 'LGO');
-    const totalAmount = detailRows.reduce((sum, row) => sum + row.totalAmount, 0);
-
-    return {
-      startDate: start,
-      endDate: end,
-      summary: {
-        totalVisits: detailRows.length,
-        totalPatients: new Set(detailRows.map((row) => row.hn).filter(Boolean)).size,
-        totalAmount: Number(totalAmount.toFixed(2)),
-        ofcVisits: ofcRows.length,
-        ofcAmount: Number(ofcRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
-        lgoVisits: lgoRows.length,
-        lgoAmount: Number(lgoRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
-      },
-      matrix,
-      byDate: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
-      recent: detailRows.slice(0, 100),
-    };
   } finally {
     connection.release();
   }
 };
 
+const getCivilServiceSummary = async (start: string, end: string, staffOnly = false) => {
+  const detailRows = await getCivilServiceRows(start, end, staffOnly);
+
+  const categories = [...CIVIL_SERVICE_KEYS];
+  const matrix = categories.map((key) => {
+    const categoryRows = detailRows.filter((row) => row.serviceGroup === key);
+    const ofcRows = categoryRows.filter((row) => row.rightCode === 'OFC');
+    const lgoRows = categoryRows.filter((row) => row.rightCode === 'LGO');
+    return {
+      key,
+      label: CIVIL_SERVICE_LABELS[key],
+      total: categoryRows.length,
+      patients: new Set(categoryRows.map((row) => row.hn).filter(Boolean)).size,
+      amount: Number(categoryRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+      ofc: {
+        visits: ofcRows.length,
+        amount: Number(ofcRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+      },
+      lgo: {
+        visits: lgoRows.length,
+        amount: Number(lgoRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+      },
+    };
+  });
+
+  const byDate = new Map<string, { date: string; ofc: number; lgo: number; total: number }>();
+  detailRows.forEach((row) => {
+    const day = byDate.get(row.serviceDate) || { date: row.serviceDate, ofc: 0, lgo: 0, total: 0 };
+    if (row.rightCode === 'OFC') day.ofc += 1;
+    if (row.rightCode === 'LGO') day.lgo += 1;
+    day.total += 1;
+    byDate.set(row.serviceDate, day);
+  });
+
+  const ofcRows = detailRows.filter((row) => row.rightCode === 'OFC');
+  const lgoRows = detailRows.filter((row) => row.rightCode === 'LGO');
+  const totalAmount = detailRows.reduce((sum, row) => sum + row.totalAmount, 0);
+
+  return {
+    startDate: start,
+    endDate: end,
+    summary: {
+      totalVisits: detailRows.length,
+      totalPatients: new Set(detailRows.map((row) => row.hn).filter(Boolean)).size,
+      totalAmount: Number(totalAmount.toFixed(2)),
+      ofcVisits: ofcRows.length,
+      ofcAmount: Number(ofcRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+      lgoVisits: lgoRows.length,
+      lgoAmount: Number(lgoRows.reduce((sum, row) => sum + row.totalAmount, 0).toFixed(2)),
+    },
+    matrix,
+    byDate: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    recent: detailRows,
+  };
+};
+
 const app = express();
-app.use(cors());
+app.use(cors({ exposedHeaders: ['Content-Disposition'] }));
 app.use(express.json());
 
 app.get('/api/health', async (_req, res) => {
@@ -609,6 +640,123 @@ app.get('/api/civil-service/summary', async (req, res) => {
   } catch (error) {
     console.error('GET /api/civil-service/summary error:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'โหลดข้อมูลสิทธิ์ข้าราชการไม่สำเร็จ' });
+  }
+});
+
+app.get('/api/civil-service/visits/:vn', async (req, res) => {
+  try {
+    const vn = String(req.params.vn || '').trim();
+    if (!vn) return res.status(400).json({ success: false, error: 'ต้องระบุ VN' });
+    const data = await getTelemedVisitDetail(vn);
+    if (!data) return res.status(404).json({ success: false, error: 'ไม่พบข้อมูล Visit' });
+    return res.json({ success: true, data });
+  } catch (error) {
+    console.error('GET /api/civil-service/visits/:vn error:', error);
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'โหลดรายละเอียด Visit ไม่สำเร็จ' });
+  }
+});
+
+app.get('/api/civil-service/export', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = toDateText(req.query.startDate, today);
+    const endDate = toDateText(req.query.endDate, startDate);
+    const staffOnly = String(req.query.staffOnly || '') === '1';
+    const exportType = toText(req.query.type) === 'summary' ? 'summary' : 'detail';
+    const serviceGroupText = toText(req.query.serviceGroup);
+    const rightCodeText = toText(req.query.rightCode).toUpperCase();
+    const serviceGroup = isCivilServiceGroup(serviceGroupText) ? serviceGroupText : '';
+    const rightCode = isCivilRightKey(rightCodeText) ? rightCodeText : '';
+
+    let rows = await getCivilServiceRows(startDate, endDate, staffOnly);
+    if (serviceGroup) rows = rows.filter((row) => row.serviceGroup === serviceGroup);
+    if (rightCode) rows = rows.filter((row) => row.rightCode === rightCode);
+
+    const scopeLabel = staffOnly ? 'ข้าราชการในโรงพยาบาล' : 'ภาพรวมข้าราชการ';
+    const filenamePrefix = exportType === 'summary' ? 'civil-service-summary' : 'civil-service-detail';
+    const filename = `${filenamePrefix}-${startDate}_to_${endDate}.csv`;
+
+    if (exportType === 'summary') {
+      const targets = getCivilTargetsForMonth(startDate.slice(0, 7));
+      const serviceKeys = serviceGroup ? [serviceGroup] : [...CIVIL_SERVICE_KEYS];
+      const rightKeys = rightCode ? [rightCode] : [...CIVIL_RIGHT_KEYS];
+      const csvRows: unknown[][] = [[
+        'ช่วงข้อมูล',
+        'มุมมอง',
+        'หมวดบริการ',
+        'สิทธิ์',
+        'จำนวน visit',
+        'จำนวนผู้รับบริการ',
+        'ยอดเงิน',
+        'เป้า visit',
+        '% visit',
+        'เป้ายอดเงิน',
+        '% ยอดเงิน',
+      ]];
+
+      serviceKeys.forEach((service) => {
+        rightKeys.forEach((right) => {
+          const subset = rows.filter((row) => row.serviceGroup === service && row.rightCode === right);
+          const amount = subset.reduce((sum, row) => sum + row.totalAmount, 0);
+          const target = targets[`${service}:${right}`];
+          const visitPercent = target?.visitEnabled && target.visitTarget > 0 ? Math.round((subset.length / target.visitTarget) * 100) : '';
+          const amountPercent = target?.amountEnabled && target.amountTarget > 0 ? Math.round((amount / target.amountTarget) * 100) : '';
+          csvRows.push([
+            `${startDate} ถึง ${endDate}`,
+            scopeLabel,
+            CIVIL_SERVICE_LABELS[service],
+            right,
+            subset.length,
+            new Set(subset.map((row) => row.hn).filter(Boolean)).size,
+            Number(amount.toFixed(2)),
+            target?.visitEnabled ? target.visitTarget : '',
+            visitPercent,
+            target?.amountEnabled ? target.amountTarget : '',
+            amountPercent,
+          ]);
+        });
+      });
+
+      return sendCsv(res, filename, csvRows);
+    }
+
+    const csvRows: unknown[][] = [[
+      'วันที่',
+      'เวลา',
+      'VN',
+      'HN',
+      'CID',
+      'ผู้รับบริการ',
+      'สิทธิ์',
+      'ชื่อสิทธิ์',
+      'หมวดบริการ',
+      'รายการในใบสั่ง',
+      'ยอดเงิน',
+      'บุคลากรโรงพยาบาล',
+      'ชื่อบุคลากร',
+    ]];
+    rows.forEach((row) => {
+      csvRows.push([
+        row.serviceDate,
+        row.serviceTime,
+        row.vn,
+        row.hn,
+        row.cid,
+        row.patientName,
+        row.rightCode,
+        row.pttypeName,
+        row.serviceLabel,
+        row.serviceItems,
+        row.totalAmount,
+        row.isHospitalStaff ? 'Y' : '',
+        row.staffName,
+      ]);
+    });
+
+    return sendCsv(res, filename, csvRows);
+  } catch (error) {
+    console.error('GET /api/civil-service/export error:', error);
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'ส่งออกข้อมูลสิทธิ์ข้าราชการไม่สำเร็จ' });
   }
 });
 

@@ -183,13 +183,14 @@ const emptyCivilData: CivilSummary = {
 };
 
 const serviceMeta = [
-  { key: 'thai', label: 'แพทย์แผนไทย' },
-  { key: 'physical', label: 'กายภาพบำบัด' },
-  { key: 'dental', label: 'ทันตกรรม' },
-  { key: 'emergency', label: 'อุบัติเหตุฉุกเฉิน' },
-  { key: 'outpatient', label: 'ผู้ป่วยนอก' },
+  { key: 'thai', label: 'แพทย์แผนไทย', symbol: 'ท' },
+  { key: 'physical', label: 'กายภาพบำบัด', symbol: 'ก' },
+  { key: 'dental', label: 'ทันตกรรม', symbol: 'ทฟ' },
+  { key: 'emergency', label: 'อุบัติเหตุฉุกเฉิน', symbol: 'ER' },
+  { key: 'outpatient', label: 'ผู้ป่วยนอก', symbol: 'OPD' },
 ] as const;
 const rightMeta = ['OFC', 'LGO'] as const;
+const civilServiceMeta = (key: CivilRow['serviceGroup']) => serviceMeta.find((service) => service.key === key) || serviceMeta[4];
 
 const makeDefaultTargets = (month: string): CivilTargetsData => ({
   month,
@@ -226,6 +227,24 @@ const fetchApi = async (path: string, options?: RequestInit) => {
   const json = JSON.parse(text);
   if (!response.ok || !json.success) throw new Error(json.error || 'โหลดข้อมูลไม่สำเร็จ');
   return json;
+};
+
+const filenameFromResponse = (response: Response, fallback: string) => {
+  const disposition = response.headers.get('content-disposition') || '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  return match?.[1] || fallback;
+};
+
+const downloadResponseFile = async (response: Response, fallbackName: string) => {
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filenameFromResponse(response, fallbackName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 };
 
 function App() {
@@ -464,6 +483,7 @@ function App() {
 
 function CivilServiceMonitor() {
   const loadRequestRef = useRef(0);
+  const tableSectionRef = useRef<HTMLElement | null>(null);
   const [scope, setScope] = useState<'all' | 'staff'>('all');
   const [startDate, setStartDate] = useState(currentMonthStart);
   const [endDate, setEndDate] = useState(today);
@@ -478,6 +498,7 @@ function CivilServiceMonitor() {
   const [detail, setDetail] = useState<VisitDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState<'summary' | 'detail' | ''>('');
   const [error, setError] = useState('');
 
   const loadData = async (scopeOverride: 'all' | 'staff' = scope) => {
@@ -565,12 +586,44 @@ function CivilServiceMonitor() {
     setDetail(null);
     setDetailLoading(true);
     try {
-      const json = await fetchApi(`/api/telemed/visits/${encodeURIComponent(row.vn)}`);
+      const json = await fetchApi(`/api/civil-service/visits/${encodeURIComponent(row.vn)}`);
       setDetail(json.data);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const selectService = (key: CivilRow['serviceGroup']) => {
+    setServiceFilter((current) => current === key ? 'all' : key);
+    window.requestAnimationFrame(() => {
+      tableSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
+  const downloadCivilExport = async (type: 'summary' | 'detail') => {
+    setExporting(type);
+    setError('');
+    try {
+      const query = new URLSearchParams({ startDate, endDate, type });
+      if (scope === 'staff') query.set('staffOnly', '1');
+      if (rightFilter !== 'ALL') query.set('rightCode', rightFilter);
+      if (serviceFilter !== 'all') query.set('serviceGroup', serviceFilter);
+      const response = await fetch(`${apiBaseUrl}/api/civil-service/export?${query.toString()}`);
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const json = await response.json();
+          throw new Error(json.error || 'ส่งออกข้อมูลไม่สำเร็จ');
+        }
+        throw new Error(await response.text() || 'ส่งออกข้อมูลไม่สำเร็จ');
+      }
+      await downloadResponseFile(response, `civil-service-${type}-${startDate}.csv`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setExporting('');
     }
   };
 
@@ -582,6 +635,9 @@ function CivilServiceMonitor() {
     (rightFilter === 'ALL' || row.rightCode === rightFilter)
     && (serviceFilter === 'all' || row.serviceGroup === serviceFilter)
   )), [data.recent, rightFilter, serviceFilter]);
+  const filteredAmount = useMemo(() => filteredRows.reduce((sum, row) => sum + row.totalAmount, 0), [filteredRows]);
+  const filteredPatients = useMemo(() => new Set(filteredRows.map((row) => row.hn).filter(Boolean)).size, [filteredRows]);
+  const selectedServiceLabel = serviceFilter === 'all' ? 'ทุกหมวดบริการ' : civilServiceMeta(serviceFilter).label;
   const maxDaily = Math.max(...data.byDate.map((row) => row.total), 1);
   const s = data.summary;
 
@@ -638,14 +694,15 @@ function CivilServiceMonitor() {
 
       <section className="civil-category-grid">
         {data.matrix.map((row) => {
+          const meta = civilServiceMeta(row.key);
           return (
           <button
             type="button"
             key={row.key}
             className={`service-card ${row.key} ${serviceFilter === row.key ? 'selected' : ''}`}
-            onClick={() => setServiceFilter((current) => current === row.key ? 'all' : row.key)}
+            onClick={() => selectService(row.key)}
           >
-            <div className="service-symbol">{row.key === 'thai' ? 'ท' : row.key === 'physical' ? 'ก' : row.key === 'dental' ? 'ทฟ' : row.key === 'emergency' ? 'ER' : 'OPD'}</div>
+            <div className="service-symbol">{meta.symbol}</div>
             <div className="service-card-head"><strong>{row.label}</strong><span>{numberText(row.total)} visit</span></div>
             <div className="service-split">
               <div>
@@ -684,7 +741,7 @@ function CivilServiceMonitor() {
         <Panel title="สัดส่วนตามบริการ" subtitle="จำนวน visit แยกตามหมวดหลัก">
           <div className="civil-service-list">
             {data.matrix.map((row) => (
-              <button key={row.key} onClick={() => setServiceFilter(row.key)}>
+              <button key={row.key} onClick={() => selectService(row.key)}>
                 <span className={`service-color ${row.key}`} />
                 <div><strong>{row.label}</strong><small>{numberText(row.patients)} คน</small></div>
                 <b>{numberText(row.total)}</b>
@@ -697,19 +754,29 @@ function CivilServiceMonitor() {
       <div className="civil-list-head">
         <div>
           <h2>รายการรับบริการ</h2>
-          <span>คลิกแต่ละรายการเพื่อดูรายละเอียดใบสั่ง</span>
+          <span>{selectedServiceLabel} | {rightFilter === 'ALL' ? 'OFC และ LGO' : rightFilter}</span>
         </div>
-        <div className="segment-control">
-          {(['ALL', 'OFC', 'LGO'] as const).map((right) => (
-            <button key={right} className={rightFilter === right ? 'active' : ''} onClick={() => setRightFilter(right)}>
-              {right === 'ALL' ? 'ทั้งหมด' : right}
-            </button>
-          ))}
+        <div className="civil-list-actions">
+          <div className="export-buttons">
+            <button type="button" onClick={() => void downloadCivilExport('summary')} disabled={!!exporting}>{exporting === 'summary' ? 'กำลังส่งออก' : 'Export summary'}</button>
+            <button type="button" onClick={() => void downloadCivilExport('detail')} disabled={!!exporting}>{exporting === 'detail' ? 'กำลังส่งออก' : 'Export detail'}</button>
+          </div>
+          <div className="segment-control">
+            {(['ALL', 'OFC', 'LGO'] as const).map((right) => (
+              <button key={right} className={rightFilter === right ? 'active' : ''} onClick={() => setRightFilter(right)}>
+                {right === 'ALL' ? 'ทั้งหมด' : right}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <section className="layout-main">
-        <Panel title="Visit ล่าสุด" subtitle={serviceFilter === 'all' ? 'ทุกหมวดบริการ' : data.matrix.find((row) => row.key === serviceFilter)?.label || ''} end={`${numberText(filteredRows.length)} รายการ`}>
+      <section className="layout-main civil-detail-section" ref={tableSectionRef}>
+        <Panel title="รายละเอียดรายการรับบริการ" subtitle="คลิกแต่ละรายการเพื่อดูใบสั่งและค่าบริการ" end={`${numberText(filteredRows.length)} รายการ`}>
+          <div className="drilldown-strip">
+            <div><strong>{selectedServiceLabel}</strong><span>{scope === 'staff' ? 'ข้าราชการในโรงพยาบาล' : 'ภาพรวมข้าราชการ'} | {rightFilter === 'ALL' ? 'ทุกสิทธิ์' : rightFilter}</span></div>
+            <div><b>{numberText(filteredRows.length)} visit</b><b>{numberText(filteredPatients)} คน</b><b>{money(filteredAmount)}</b></div>
+          </div>
           <div className="table-wrap">
             <table className="civil-table">
               <thead><tr><th>วันที่ / VN</th><th>ผู้รับบริการ</th><th>สิทธิ์</th><th>หมวดบริการ</th><th className="right">มูลค่า</th><th>รายละเอียด</th></tr></thead>
