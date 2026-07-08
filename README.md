@@ -20,8 +20,6 @@
 
 แถบ `ข้าราชการในโรงพยาบาล` นับเฉพาะผู้รับบริการที่ `patient.cid` ตรงกับ `doctor.cid` และเป็นแพทย์/บุคลากรที่ `doctor.Active = Y` เท่านั้น
 
-หน้าจอสิทธิ์ข้าราชการสามารถคลิกหมวดบริการเพื่อ drilldown รายการ visit พร้อมเปิดรายละเอียดใบสั่งแต่ละ VN และส่งออกไฟล์ Excel-compatible CSV ได้ทั้งแบบ summary และ detail ตาม filter ที่เลือกอยู่
-
 - Frontend: React + Vite
 - Backend: Express + MySQL
 - Default frontend port: `3517`
@@ -155,7 +153,6 @@ http://192.168.2.202:3517
 curl "http://localhost:3516/api/health"
 curl "http://localhost:3516/api/telemed/summary"
 curl "http://localhost:3516/api/civil-service/summary"
-curl "http://localhost:3516/api/civil-service/export?startDate=2026-06-01&endDate=2026-06-30&type=detail"
 ```
 
 ## รันด้วย PM2

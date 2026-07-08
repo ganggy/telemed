@@ -693,53 +693,12 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .civil-list-head { display: flex; justify-content: space-between; gap: 14px; align-items: end; margin: 20px 0 12px; }
 .civil-list-head h2 { margin: 0; color: #102f41; font-size: 1.18rem; }
 .civil-list-head span { color: #648193; font-size: 0.8rem; font-weight: 700; }
-.civil-list-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; align-items: center; }
-.export-buttons { display: flex; gap: 8px; }
-.export-buttons button {
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid rgba(15, 120, 149, 0.22);
-  border-radius: 7px;
-  background: linear-gradient(135deg, #e8fbff, #e8fff6);
-  color: #0f7895;
-  cursor: pointer;
-  font-size: 0.76rem;
-  font-weight: 900;
-}
-.export-buttons button:disabled { opacity: 0.62; cursor: wait; }
 .segment-control { display: flex; padding: 3px; border: 1px solid #cee2ec; border-radius: 8px; background: #fff; }
 .segment-control button { min-width: 70px; height: 34px; border: 0; border-radius: 6px; background: transparent; color: #527487; cursor: pointer; font-size: 0.78rem; font-weight: 900; }
 .segment-control button.active { background: #10394e; color: #fff; }
 .right-badge { width: fit-content; padding: 4px 9px; border-radius: 6px; font-weight: 900; }
 .right-badge.ofc { background: #dbeafe; color: #1d4ed8; }
 .right-badge.lgo { background: #ffedd5; color: #c2410c; }
-.drilldown-strip {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  align-items: center;
-  margin-bottom: 12px;
-  padding: 12px 14px;
-  border: 1px solid #d7eaf2;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #f6fcff, #effdf6);
-}
-.drilldown-strip strong,
-.drilldown-strip span,
-.drilldown-strip b { display: block; }
-.drilldown-strip strong { color: #102f41; font-size: 0.98rem; }
-.drilldown-strip span { margin-top: 3px; color: #648193; font-size: 0.76rem; font-weight: 800; }
-.drilldown-strip > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.drilldown-strip b {
-  min-width: 88px;
-  padding: 7px 9px;
-  border-radius: 7px;
-  background: #ffffff;
-  color: #0f7895;
-  font-size: 0.78rem;
-  text-align: center;
-  box-shadow: inset 0 0 0 1px #dbeaf1;
-}
 .civil-table { min-width: 900px; }
 .staff-line { color: #0f7895; font-weight: 900; }
 
@@ -846,16 +805,9 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
   .detail-drawer { padding: 14px; }
   .kpi-grid { gap: 10px; }
   .civil-list-head { align-items: stretch; flex-direction: column; }
-  .civil-list-actions,
-  .export-buttons { width: 100%; }
-  .export-buttons button { flex: 1; }
-  .civil-list-actions { justify-content: stretch; }
   .civil-view-tabs { width: 100%; }
   .civil-view-tabs button { flex: 1; padding: 0 8px; }
   .segment-control button { flex: 1; min-width: 0; }
-  .drilldown-strip { align-items: stretch; flex-direction: column; }
-  .drilldown-strip > div:last-child { justify-content: stretch; }
-  .drilldown-strip b { flex: 1; min-width: 0; }
   .target-modal-backdrop { padding: 8px; }
   .target-modal { max-height: calc(100vh - 16px); }
   .target-modal > header,
