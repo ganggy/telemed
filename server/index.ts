@@ -598,12 +598,25 @@ type PcuSummary = {
 
 const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Promise<PcuSummary> => {
   const connection = await getConnection();
+
+  // ตรวจว่า table `pcu` มีอยู่ใน schema ไหม
+  const [tableCheck] = await connection.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'pcu'`
+  ) as any[];
+  const hasPcuTable = Number((tableCheck as any[])[0]?.cnt) > 0;
+
   try {
     // patient.hcode = รหัส รพ.สต. ที่ผู้ป่วยลงทะเบียนประจำ (สังกัดตามที่อยู่)
-    // Join กับตาราง pcu เพื่อดึงชื่อ รพ.สต.
     const pcuWhere = pcuFilter ? `AND COALESCE(pt.hcode, '') = ?` : '';
     const params: unknown[] = [start, end];
     if (pcuFilter) params.push(pcuFilter);
+
+    const pcuNameExpr = hasPcuTable
+      ? `COALESCE(pcu.name, pt.hcode, 'ไม่ระบุ')`
+      : `COALESCE(pt.hcode, 'ไม่ระบุ')`;
+    const pcuJoin = hasPcuTable
+      ? `LEFT JOIN pcu ON pcu.pcucode = pt.hcode`
+      : '';
 
     const [rows] = await connection.query(
       `
@@ -618,12 +631,12 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         COALESCE(ptt.name, '') AS pttypeName,
         UPPER(COALESCE(ptt.hipdata_code, '')) AS hipdataCode,
         COALESCE(pt.hcode, '') AS pcucode,
-        COALESCE(pcu.name, pt.hcode, 'ไม่ระบุ') AS pcuName,
+        ${pcuNameExpr} AS pcuName,
         COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount
       FROM ovst o
       JOIN patient pt ON pt.hn = o.hn
       LEFT JOIN pttype ptt ON ptt.pttype = o.pttype
-      LEFT JOIN pcu ON pcu.pcucode = pt.hcode
+      ${pcuJoin}
       WHERE o.vstdate BETWEEN ? AND ?
         AND COALESCE(pt.hcode, '') <> ''
         ${pcuWhere}
@@ -632,6 +645,7 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
       `,
       params
     );
+
 
 
     const detailRows = (Array.isArray(rows) ? rows : []).map((row: any) => ({
