@@ -229,7 +229,7 @@ const fetchApi = async (path: string, options?: RequestInit) => {
 };
 
 function App() {
-  const [page, setPage] = useState<'telemed' | 'civil'>('telemed');
+  const [page, setPage] = useState<'telemed' | 'civil' | 'pcu'>('telemed');
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [data, setData] = useState<TelemedSummary>(emptyData);
@@ -299,6 +299,7 @@ function App() {
         <nav>
           <button className={page === 'telemed' ? 'active' : ''} onClick={() => setPage('telemed')}>Telemed</button>
           <button className={page === 'civil' ? 'active' : ''} onClick={() => setPage('civil')}>สิทธิ์ข้าราชการ</button>
+          <button className={page === 'pcu' ? 'active' : ''} onClick={() => setPage('pcu')}>รพ.สต.</button>
         </nav>
       </aside>
 
@@ -455,12 +456,231 @@ function App() {
           <DetailDrawer row={selected} detail={detail} loading={detailLoading} onClose={() => { setSelected(null); setDetail(null); }} />
         </section>
       </main>
-      ) : (
+      ) : page === 'civil' ? (
         <CivilServiceMonitor />
+      ) : (
+        <PcuMonitor />
       )}
     </div>
   );
 }
+
+// ─── PCU (รพ.สต.) types ────────────────────────────────────────────────────────
+
+type PcuRow = {
+  pcucode: string;
+  pcuName: string;
+  visits: number;
+  patients: number;
+  amount: number;
+  ofc: number;
+  lgo: number;
+  uc: number;
+  other: number;
+};
+
+type PcuVisitRow = {
+  vn: string;
+  hn: string;
+  serviceDate: string;
+  serviceTime: string;
+  cid: string;
+  patientName: string;
+  pttype: string;
+  pttypeName: string;
+  hipdataCode: string;
+  pcucode: string;
+  pcuName: string;
+  totalAmount: number;
+};
+
+type PcuSummary = {
+  startDate: string;
+  endDate: string;
+  summary: { totalVisits: number; totalPatients: number; totalAmount: number; pcuCount: number };
+  byPcu: PcuRow[];
+  byDate: Array<{ date: string; visits: number; amount: number }>;
+  recent: PcuVisitRow[];
+};
+
+const emptyPcuData: PcuSummary = {
+  startDate: today,
+  endDate: today,
+  summary: { totalVisits: 0, totalPatients: 0, totalAmount: 0, pcuCount: 0 },
+  byPcu: [],
+  byDate: [],
+  recent: [],
+};
+
+function PcuMonitor() {
+  const [startDate, setStartDate] = useState(currentMonthStart);
+  const [endDate, setEndDate] = useState(today);
+  const [data, setData] = useState<PcuSummary>(emptyPcuData);
+  const [selectedPcu, setSelectedPcu] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadData = async (pcuFilter?: string) => {
+    setLoading(true);
+    setError('');
+    try {
+      const query = new URLSearchParams({ startDate, endDate });
+      if (pcuFilter) query.set('pcu', pcuFilter);
+      const json = await fetchApi(`/api/pcu/summary?${query.toString()}`);
+      setData(json.data);
+    } catch (err) {
+      setData(emptyPcuData);
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void loadData(); }, []);
+
+  const selectPcu = (code: string) => {
+    const next = selectedPcu === code ? null : code;
+    setSelectedPcu(next);
+  };
+
+  const filteredVisits = useMemo(() =>
+    selectedPcu ? data.recent.filter((r) => r.pcucode === selectedPcu) : data.recent,
+    [data.recent, selectedPcu]
+  );
+
+  const maxPcuVisits = Math.max(...data.byPcu.map((p) => p.visits), 1);
+  const maxDateVisits = Math.max(...data.byDate.map((d) => d.visits), 1);
+  const s = data.summary;
+  const activePcu = selectedPcu ? data.byPcu.find((p) => p.pcucode === selectedPcu) : null;
+
+  return (
+    <main className="dashboard pcu-dashboard">
+      <header className="topbar">
+        <div>
+          <h1>PCU Monitor · รพ.สต.</h1>
+          <p>ติดตามจำนวน visit แยกราย รพ.สต. โดยอ้างอิงจาก <strong>ที่อยู่ของคนไข้</strong> (field <code>hcode</code> ในตาราง patient) ซึ่งระบุ รพ.สต. ที่คนไข้ลงทะเบียนประจำตามพื้นที่</p>
+        </div>
+        <section className="filters">
+          <label>
+            <span>วันที่เริ่ม</span>
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </label>
+          <label>
+            <span>วันที่สิ้นสุด</span>
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          </label>
+          <button onClick={() => void loadData()} disabled={loading}>{loading ? 'กำลังโหลด' : 'ดึงข้อมูล'}</button>
+        </section>
+      </header>
+
+      {error ? <div className="alert">{error}</div> : null}
+
+      {/* KPI row */}
+      <section className="kpi-grid">
+        <Metric label="Visit ทั้งหมด" value={numberText(s.totalVisits)} detail={`${numberText(s.totalPatients)} ผู้ป่วย`} tone="blue" />
+        <Metric label="มูลค่ารวม" value={money(s.totalAmount)} detail={`${s.totalVisits > 0 ? money(s.totalAmount / s.totalVisits) : '฿0.00'} / visit เฉลี่ย`} tone="cyan" />
+        <Metric label="จำนวน รพ.สต." value={numberText(s.pcuCount)} detail="หน่วยบริการที่มีข้อมูล" tone="green" />
+        {activePcu ? (
+          <Metric label={`${activePcu.pcuName}`} value={numberText(activePcu.visits)} detail={`${numberText(activePcu.patients)} คน | ${money(activePcu.amount)}`} tone="amber" />
+        ) : (
+          <Metric label="คลิก รพ.สต." value="เพื่อกรอง" detail="คลิกที่การ์ด รพ.สต. ด้านล่าง" tone="amber" />
+        )}
+      </section>
+
+      {/* PCU cards */}
+      <section className="pcu-cards">
+        {data.byPcu.map((pcu) => (
+          <button
+            key={pcu.pcucode}
+            type="button"
+            className={`pcu-card ${selectedPcu === pcu.pcucode ? 'selected' : ''}`}
+            onClick={() => selectPcu(pcu.pcucode)}
+          >
+            <div className="pcu-card-top">
+              <strong>{pcu.pcuName || pcu.pcucode}</strong>
+              <em>{numberText(pcu.visits)} visit</em>
+            </div>
+            <div className="pcu-bar-wrap">
+              <i className="pcu-bar" style={{ width: `${Math.max((pcu.visits / maxPcuVisits) * 100, 4)}%` }} />
+            </div>
+            <div className="pcu-card-footer">
+              <span>OFC <b>{numberText(pcu.ofc)}</b></span>
+              <span>LGO <b>{numberText(pcu.lgo)}</b></span>
+              <span>UC <b>{numberText(pcu.uc)}</b></span>
+              <span>อื่นๆ <b>{numberText(pcu.other)}</b></span>
+            </div>
+            <div className="pcu-card-amount">{money(pcu.amount)}</div>
+          </button>
+        ))}
+        {data.byPcu.length === 0 && !loading && (
+          <Empty text="ไม่พบข้อมูล รพ.สต. ในช่วงวันที่เลือก — อาจยังไม่มีการบันทึก hcode ในตาราง patient หรือผู้ป่วยในช่วงนี้ไม่มีที่อยู่ระบุ รพ.สต." />
+        )}
+      </section>
+
+      {/* Trend chart + visit table */}
+      <section className="pcu-lower">
+        <Panel title="แนวโน้มรายวัน" subtitle="จำนวน visit รวมทุก รพ.สต." end={`${numberText(s.totalVisits)} visit`}>
+          <div className="daily-chart">
+            {data.byDate.map((row) => {
+              const height = Math.max((row.visits / maxDateVisits) * 188, 8);
+              return (
+                <div className="day" key={row.date}>
+                  <span>{numberText(row.visits)}</span>
+                  <div className="day-bar pcu-day-bar" style={{ height }}><i style={{ height }} /></div>
+                  <small>{row.date.slice(5).replace('-', '/')}</small>
+                </div>
+              );
+            })}
+            {data.byDate.length === 0 && <Empty text="ไม่พบข้อมูล" />}
+          </div>
+        </Panel>
+
+        <Panel
+          title={selectedPcu ? `รายการ: ${activePcu?.pcuName || selectedPcu}` : 'รายการ visit ล่าสุด'}
+          subtitle={selectedPcu ? 'คลิก รพ.สต. อีกครั้งเพื่อยกเลิกตัวกรอง' : 'คลิกที่การ์ด รพ.สต. เพื่อกรองเฉพาะหน่วย'}
+          end={`${numberText(filteredVisits.length)} รายการ`}
+        >
+          {selectedPcu && (
+            <button type="button" className="pcu-clear-btn" onClick={() => setSelectedPcu(null)}>× ล้างตัวกรอง รพ.สต.</button>
+          )}
+          <div className="table-wrap">
+            <table className="pcu-table">
+              <thead>
+                <tr>
+                  <th>วันที่ / VN</th>
+                  <th>ผู้รับบริการ</th>
+                  <th>สิทธิ์</th>
+                  <th>รพ.สต.</th>
+                  <th className="right">มูลค่า</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredVisits.map((row) => (
+                  <tr key={row.vn}>
+                    <td><strong>{row.serviceDate} {row.serviceTime}</strong><span>VN {row.vn} | HN {row.hn}</span></td>
+                    <td><strong>{row.patientName || '-'}</strong><span>{row.cid || '-'}</span></td>
+                    <td>
+                      <span className={`right-badge ${row.hipdataCode.toLowerCase() === 'ofc' ? 'ofc' : row.hipdataCode.toLowerCase() === 'lgo' ? 'lgo' : 'muted-badge'}`}>
+                        {row.hipdataCode || '-'}
+                      </span>
+                      <small>{row.pttypeName}</small>
+                    </td>
+                    <td><strong>{row.pcuName || row.pcucode || '-'}</strong><span>{row.pcucode}</span></td>
+                    <td className="right money">{money(row.totalAmount)}</td>
+                  </tr>
+                ))}
+                {filteredVisits.length === 0 && (
+                  <tr><td colSpan={5} className="empty-cell">ไม่พบรายการ</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      </section>
+    </main>
+  );
+}
+
 
 function CivilServiceMonitor() {
   const loadRequestRef = useRef(0);

@@ -558,6 +558,161 @@ const getCivilServiceSummary = async (start: string, end: string, staffOnly = fa
   }
 };
 
+// ─── PCU (รพ.สต.) ─────────────────────────────────────────────────────────────
+
+type PcuRow = {
+  pcucode: string;
+  pcuName: string;
+  visits: number;
+  patients: number;
+  amount: number;
+  ofc: number;
+  lgo: number;
+  uc: number;
+  other: number;
+};
+
+type PcuVisitRow = {
+  vn: string;
+  hn: string;
+  serviceDate: string;
+  serviceTime: string;
+  cid: string;
+  patientName: string;
+  pttype: string;
+  pttypeName: string;
+  hipdataCode: string;
+  pcucode: string;
+  pcuName: string;
+  totalAmount: number;
+};
+
+type PcuSummary = {
+  startDate: string;
+  endDate: string;
+  summary: { totalVisits: number; totalPatients: number; totalAmount: number; pcuCount: number };
+  byPcu: PcuRow[];
+  byDate: Array<{ date: string; visits: number; amount: number }>;
+  recent: PcuVisitRow[];
+};
+
+const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Promise<PcuSummary> => {
+  const connection = await getConnection();
+  try {
+    // patient.hcode = รหัส รพ.สต. ที่ผู้ป่วยลงทะเบียนประจำ (สังกัดตามที่อยู่)
+    // Join กับตาราง pcu เพื่อดึงชื่อ รพ.สต.
+    const pcuWhere = pcuFilter ? `AND COALESCE(pt.hcode, '') = ?` : '';
+    const params: unknown[] = [start, end];
+    if (pcuFilter) params.push(pcuFilter);
+
+    const [rows] = await connection.query(
+      `
+      SELECT
+        o.vn,
+        o.hn,
+        DATE_FORMAT(o.vstdate, '%Y-%m-%d') AS serviceDate,
+        DATE_FORMAT(o.vsttime, '%H:%i') AS serviceTime,
+        pt.cid,
+        CONCAT(COALESCE(pt.pname, ''), COALESCE(pt.fname, ''), ' ', COALESCE(pt.lname, '')) AS patientName,
+        o.pttype,
+        COALESCE(ptt.name, '') AS pttypeName,
+        UPPER(COALESCE(ptt.hipdata_code, '')) AS hipdataCode,
+        COALESCE(pt.hcode, '') AS pcucode,
+        COALESCE(pcu.name, pt.hcode, 'ไม่ระบุ') AS pcuName,
+        COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount
+      FROM ovst o
+      JOIN patient pt ON pt.hn = o.hn
+      LEFT JOIN pttype ptt ON ptt.pttype = o.pttype
+      LEFT JOIN pcu ON pcu.pcucode = pt.hcode
+      WHERE o.vstdate BETWEEN ? AND ?
+        AND COALESCE(pt.hcode, '') <> ''
+        ${pcuWhere}
+      ORDER BY o.vstdate DESC, o.vsttime DESC, o.vn DESC
+      LIMIT 20000
+      `,
+      params
+    );
+
+
+    const detailRows = (Array.isArray(rows) ? rows : []).map((row: any) => ({
+      vn: toText(row.vn),
+      hn: toText(row.hn),
+      serviceDate: toText(row.serviceDate),
+      serviceTime: toText(row.serviceTime),
+      cid: toText(row.cid),
+      patientName: toText(row.patientName),
+      pttype: toText(row.pttype),
+      pttypeName: toText(row.pttypeName),
+      hipdataCode: toText(row.hipdataCode),
+      pcucode: toText(row.pcucode),
+      pcuName: toText(row.pcuName),
+      totalAmount: toNumber(row.totalAmount),
+    }));
+
+    // Aggregate by PCU
+    const byPcuMap = new Map<string, {
+      pcucode: string; pcuName: string; visits: number;
+      patients: Set<string>; amount: number; ofc: number; lgo: number; uc: number; other: number;
+    }>();
+    const byDateMap = new Map<string, { date: string; visits: number; amount: number }>();
+    const allVisits = new Set<string>();
+    const allPatients = new Set<string>();
+    let totalAmount = 0;
+
+    detailRows.forEach((row) => {
+      allVisits.add(row.vn);
+      if (row.hn) allPatients.add(row.hn);
+      totalAmount += row.totalAmount;
+
+      const key = row.pcucode || 'ไม่ระบุ';
+      const pcu = byPcuMap.get(key) || { pcucode: key, pcuName: row.pcuName, visits: 0, patients: new Set<string>(), amount: 0, ofc: 0, lgo: 0, uc: 0, other: 0 };
+      pcu.visits += 1;
+      if (row.hn) pcu.patients.add(row.hn);
+      pcu.amount += row.totalAmount;
+      if (row.hipdataCode === 'OFC') pcu.ofc += 1;
+      else if (row.hipdataCode === 'LGO') pcu.lgo += 1;
+      else if (row.hipdataCode === 'UCS' || row.hipdataCode === 'UC' || row.hipdataCode.startsWith('UC')) pcu.uc += 1;
+      else pcu.other += 1;
+      byPcuMap.set(key, pcu);
+
+      const day = byDateMap.get(row.serviceDate) || { date: row.serviceDate, visits: 0, amount: 0 };
+      day.visits += 1;
+      day.amount += row.totalAmount;
+      byDateMap.set(row.serviceDate, day);
+    });
+
+    return {
+      startDate: start,
+      endDate: end,
+      summary: {
+        totalVisits: allVisits.size,
+        totalPatients: allPatients.size,
+        totalAmount: Number(totalAmount.toFixed(2)),
+        pcuCount: byPcuMap.size,
+      },
+      byPcu: [...byPcuMap.values()]
+        .map((p) => ({
+          pcucode: p.pcucode,
+          pcuName: p.pcuName,
+          visits: p.visits,
+          patients: p.patients.size,
+          amount: Number(p.amount.toFixed(2)),
+          ofc: p.ofc,
+          lgo: p.lgo,
+          uc: p.uc,
+          other: p.other,
+        }))
+        .sort((a, b) => b.visits - a.visits),
+      byDate: [...byDateMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
+      recent: detailRows.slice(0, 100),
+    };
+  } finally {
+    connection.release();
+  }
+};
+
+// ─── Express App ───────────────────────────────────────────────────────────────
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -654,6 +809,20 @@ app.put('/api/civil-service/targets', (req, res) => {
   } catch (error) {
     console.error('PUT /api/civil-service/targets error:', error);
     return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'บันทึกเป้าหมายไม่สำเร็จ' });
+  }
+});
+
+app.get('/api/pcu/summary', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = toDateText(req.query.startDate, today);
+    const endDate = toDateText(req.query.endDate, startDate);
+    const pcuFilter = toText(req.query.pcu) || undefined;
+    const data = await getPcuSummary(startDate, endDate, pcuFilter);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('GET /api/pcu/summary error:', error);
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'โหลดข้อมูล รพ.สต. ไม่สำเร็จ' });
   }
 });
 
