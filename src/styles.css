@@ -920,6 +920,23 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
   margin-top: 2px;
 }
 
+.pcu-card-telemed-sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(14, 116, 144, 0.15);
+  font-size: 0.72rem;
+  color: #4b6e7f;
+}
+
+.pcu-card-telemed-sub b {
+  color: #007a9a;
+  font-weight: 800;
+}
+
+
 /* PCU lower section: chart + table */
 .pcu-lower {
   display: grid;

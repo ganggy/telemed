@@ -476,6 +476,9 @@ type PcuRow = {
   visits: number;
   patients: number;
   amount: number;
+  claimAmount: number;
+  closeEpCount: number;
+  closeRate: number;
   ofc: number;
   lgo: number;
   uc: number;
@@ -498,22 +501,35 @@ type PcuVisitRow = {
   moopart: string;
   tmbpart: string;
   tmbName: string;
+  detectedByAdp: boolean;
+  detectedByOvstist: boolean;
+  hasCloseEp: boolean;
+  claimAmount: number;
   totalAmount: number;
+  telemedItems: string;
 };
 
 type PcuSummary = {
   startDate: string;
   endDate: string;
-  summary: { totalVisits: number; totalPatients: number; totalAmount: number; pcuCount: number };
+  summary: {
+    totalVisits: number;
+    totalPatients: number;
+    totalAmount: number;
+    totalClaimAmount: number;
+    closeEpCount: number;
+    closeRate: number;
+    pcuCount: number;
+  };
   byPcu: PcuRow[];
-  byDate: Array<{ date: string; visits: number; amount: number }>;
+  byDate: Array<{ date: string; visits: number; amount: number; claimAmount: number; ready: number; pending: number }>;
   recent: PcuVisitRow[];
 };
 
 const emptyPcuData: PcuSummary = {
   startDate: today,
   endDate: today,
-  summary: { totalVisits: 0, totalPatients: 0, totalAmount: 0, pcuCount: 0 },
+  summary: { totalVisits: 0, totalPatients: 0, totalAmount: 0, totalClaimAmount: 0, closeEpCount: 0, closeRate: 0, pcuCount: 0 },
   byPcu: [],
   byDate: [],
   recent: [],
@@ -525,6 +541,9 @@ function PcuMonitor() {
   const [data, setData] = useState<PcuSummary>(emptyPcuData);
   const [selectedPcu, setSelectedPcu] = useState<string | null>(null);
   const [expandedVillages, setExpandedVillages] = useState<string | null>(null);
+  const [selectedRow, setSelectedRow] = useState<PcuVisitRow | null>(null);
+  const [detail, setDetail] = useState<VisitDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -536,11 +555,26 @@ function PcuMonitor() {
       if (pcuFilter) query.set('pcu', pcuFilter);
       const json = await fetchApi(`/api/pcu/summary?${query.toString()}`);
       setData(json.data);
+      setSelectedRow((curr) => curr && json.data.recent.some((r: PcuVisitRow) => r.vn === curr.vn) ? curr : null);
     } catch (err) {
       setData(emptyPcuData);
       setError((err as Error).message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openDetail = async (row: PcuVisitRow) => {
+    setSelectedRow(row);
+    setDetail(null);
+    setDetailLoading(true);
+    try {
+      const json = await fetchApi(`/api/telemed/visits/${encodeURIComponent(row.vn)}`);
+      setDetail(json.data);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -570,8 +604,8 @@ function PcuMonitor() {
     <main className="dashboard pcu-dashboard">
       <header className="topbar">
         <div>
-          <h1>PCU Monitor · รพ.สต. & หน่วยบริการปฐมภูมิ</h1>
-          <p>จัดกลุ่มและติดตามจำนวน visit <strong>แยกตามที่อยู่ผู้ป่วย (ตำบล & หมู่ที่)</strong> เข้าสู่ รพ.สต. และหน่วยบริการปฐมภูมิที่รับผิดชอบ</p>
+          <h1>PCU Telemed Monitor · รพ.สต.</h1>
+          <p>ติดตามบริการ <strong>Telemed เฉพาะกลุ่ม</strong> โดยจัดกลุ่มตาม <strong>ที่อยู่ของผู้ป่วย (ตำบล & หมู่ที่)</strong> เข้าสู่ รพ.สต. และหน่วยบริการปฐมภูมิที่รับผิดชอบ</p>
         </div>
         <section className="filters">
           <label>
@@ -590,13 +624,13 @@ function PcuMonitor() {
 
       {/* KPI row */}
       <section className="kpi-grid">
-        <Metric label="Visit ทั้งหมด" value={numberText(s.totalVisits)} detail={`${numberText(s.totalPatients)} ผู้ป่วย`} tone="blue" />
-        <Metric label="มูลค่ารวม" value={money(s.totalAmount)} detail={`${s.totalVisits > 0 ? money(s.totalAmount / s.totalVisits) : '฿0.00'} / visit เฉลี่ย`} tone="cyan" />
-        <Metric label="หน่วยบริการปฐมภูมิ" value={`${numberText(s.pcuCount)} แห่ง`} detail="ครอบคลุม 4 ตำบล อ.โคกศรีสุพรรณ" tone="green" />
+        <Metric label="Visit Telemed" value={numberText(s.totalVisits)} detail={`${numberText(s.totalPatients)} ผู้ป่วย`} tone="blue" />
+        <Metric label="ยอดเบิก สปสช." value={money(s.totalClaimAmount)} detail={`รวมใบสั่งยา ${money(s.totalAmount)}`} tone="cyan" />
+        <Metric label="ปิดสิทธิ์แล้ว (Close EP)" value={`${s.closeRate}%`} detail={`${numberText(s.closeEpCount)} visit ปิดสิทธิ์แล้ว`} tone="green" />
         {activePcu ? (
-          <Metric label={`${activePcu.pcuName}`} value={numberText(activePcu.visits)} detail={`${numberText(activePcu.patients)} คน | ${money(activePcu.amount)}`} tone="amber" />
+          <Metric label={`${activePcu.pcuName}`} value={`${numberText(activePcu.visits)} visit`} detail={`เบิก ${money(activePcu.claimAmount)} | ปิดสิทธิ์ ${activePcu.closeRate}%`} tone="amber" />
         ) : (
-          <Metric label="คลิกเลือกหน่วยบริการ" value="เพื่อกรองรายการ" detail="คลิกที่การ์ดเพื่อดูเฉพาะหน่วยบริการนั้น" tone="amber" />
+          <Metric label="หน่วยบริการปฐมภูมิ" value={`${numberText(s.pcuCount)} แห่ง`} detail="คลิกการ์ดเพื่อกรองเฉพาะหน่วย" tone="amber" />
         )}
       </section>
 
@@ -654,79 +688,118 @@ function PcuMonitor() {
                 <span>UC <b>{numberText(pcu.uc)}</b></span>
                 <span>อื่นๆ <b>{numberText(pcu.other)}</b></span>
               </div>
-              <div className="pcu-card-amount">{money(pcu.amount)}</div>
+              <div className="pcu-card-telemed-sub">
+                <span>เบิก สปสช. <b>{money(pcu.claimAmount)}</b></span>
+                <span>ปิดสิทธิ์ <b>{pcu.closeRate}%</b></span>
+              </div>
             </div>
           );
         })}
         {data.byPcu.length === 0 && !loading && (
-          <Empty text="ไม่พบข้อมูลผู้รับบริการในช่วงวันที่เลือก" />
+          <Empty text="ไม่พบข้อมูลบริการ Telemed ในช่วงวันที่เลือก" />
         )}
       </section>
 
-      {/* Trend chart + visit table */}
-      <section className="pcu-lower">
-        <Panel title="แนวโน้มรายวัน" subtitle="จำนวน visit รวมทุก รพ.สต." end={`${numberText(s.totalVisits)} visit`}>
-          <div className="daily-chart">
-            {data.byDate.map((row) => {
-              const height = Math.max((row.visits / maxDateVisits) * 188, 8);
-              return (
-                <div className="day" key={row.date}>
-                  <span>{numberText(row.visits)}</span>
-                  <div className="day-bar pcu-day-bar" style={{ height }}><i style={{ height }} /></div>
-                  <small>{row.date.slice(5).replace('-', '/')}</small>
-                </div>
-              );
-            })}
-            {data.byDate.length === 0 && <Empty text="ไม่พบข้อมูล" />}
-          </div>
-        </Panel>
+      {/* Trend chart + visit table + Drawer */}
+      <section className="layout-main">
+        <div className="main-stack">
+          <section className="chart-band">
+            <Panel title="แนวโน้ม Telemed รายวัน" subtitle="จำนวน visit แยกตามวันที่" end={`${numberText(s.totalVisits)} visit`}>
+              <div className="daily-chart">
+                {data.byDate.map((row) => {
+                  const height = Math.max((row.visits / maxDateVisits) * 188, 8);
+                  const readyHeight = row.visits > 0 ? (row.ready / row.visits) * height : 0;
+                  return (
+                    <div className="day" key={row.date}>
+                      <span>{numberText(row.visits)}</span>
+                      <div className="day-bar pcu-day-bar" style={{ height }}><i style={{ height: readyHeight }} /></div>
+                      <small>{row.date.slice(5).replace('-', '/')}</small>
+                    </div>
+                  );
+                })}
+                {data.byDate.length === 0 && <Empty text="ไม่พบข้อมูล" />}
+              </div>
+            </Panel>
+          </section>
 
-        <Panel
-          title={selectedPcu ? `รายการ: ${activePcu?.pcuName || selectedPcu}` : 'รายการ visit ล่าสุด'}
-          subtitle={selectedPcu ? `คลิก รพ.สต. อีกครั้งเพื่อยกเลิกตัวกรอง (${activePcu?.tambol || ''})` : 'คลิกที่การ์ด รพ.สต. เพื่อกรองเฉพาะหน่วย'}
-          end={`${numberText(filteredVisits.length)} รายการ`}
-        >
-          {selectedPcu && (
-            <button type="button" className="pcu-clear-btn" onClick={() => setSelectedPcu(null)}>× ล้างตัวกรอง ({activePcu?.pcuName})</button>
-          )}
-          <div className="table-wrap">
-            <table className="pcu-table">
-              <thead>
-                <tr>
-                  <th>วันที่ / VN</th>
-                  <th>ผู้รับบริการ</th>
-                  <th>สิทธิ์</th>
-                  <th>ที่อยู่ตามทะเบียน</th>
-                  <th>หน่วยบริการปฐมภูมิ</th>
-                  <th className="right">มูลค่า</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredVisits.map((row) => (
-                  <tr key={row.vn}>
-                    <td><strong>{row.serviceDate} {row.serviceTime}</strong><span>VN {row.vn} | HN {row.hn}</span></td>
-                    <td><strong>{row.patientName || '-'}</strong><span>{row.cid || '-'}</span></td>
-                    <td>
-                      <span className={`right-badge ${row.hipdataCode.toLowerCase() === 'ofc' ? 'ofc' : row.hipdataCode.toLowerCase() === 'lgo' ? 'lgo' : 'muted-badge'}`}>
-                        {row.hipdataCode || '-'}
-                      </span>
-                      <small>{row.pttypeName}</small>
-                    </td>
-                    <td>
-                      <strong>{row.addressText || '-'}</strong>
-                      {row.tmbName ? <span>ต.{row.tmbName} {row.moopart ? `หมู่ ${Number(row.moopart)}` : ''}</span> : null}
-                    </td>
-                    <td><strong>{row.pcuName || '-'}</strong></td>
-                    <td className="right money">{money(row.totalAmount)}</td>
+          <Panel
+            title={selectedPcu ? `รายการ Telemed: ${activePcu?.pcuName || selectedPcu}` : 'รายการ Telemed ล่าสุด'}
+            subtitle={selectedPcu ? `คลิก รพ.สต. อีกครั้งเพื่อยกเลิกตัวกรอง (${activePcu?.tambol || ''})` : 'คลิกแถวเพื่อเปิดดูรายละเอียดใบสั่งยา'}
+            end={`${numberText(filteredVisits.length)} รายการ`}
+          >
+            {selectedPcu && (
+              <button type="button" className="pcu-clear-btn" onClick={() => setSelectedPcu(null)}>× ล้างตัวกรอง ({activePcu?.pcuName})</button>
+            )}
+            <div className="table-wrap">
+              <table className="pcu-table">
+                <thead>
+                  <tr>
+                    <th>วันที่ / VN</th>
+                    <th>ผู้รับบริการ</th>
+                    <th>สิทธิ์</th>
+                    <th>ที่อยู่คนไข้</th>
+                    <th>รพ.สต.</th>
+                    <th>ช่องทาง</th>
+                    <th>สถานะ</th>
+                    <th className="right">เบิก สปสช.</th>
+                    <th>รายละเอียด</th>
                   </tr>
-                ))}
-                {filteredVisits.length === 0 && (
-                  <tr><td colSpan={6} className="empty-cell">ไม่พบรายการ</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+                </thead>
+                <tbody>
+                  {filteredVisits.map((row) => (
+                    <tr
+                      key={row.vn}
+                      className={selectedRow?.vn === row.vn ? 'selected' : ''}
+                      onClick={() => void openDetail(row)}
+                    >
+                      <td><strong>{row.serviceDate} {row.serviceTime}</strong><span>VN {row.vn} | HN {row.hn}</span></td>
+                      <td><strong>{row.patientName || '-'}</strong><span>{row.cid || '-'}</span></td>
+                      <td>
+                        <span className={`right-badge ${row.hipdataCode.toLowerCase() === 'ofc' ? 'ofc' : row.hipdataCode.toLowerCase() === 'lgo' ? 'lgo' : 'muted-badge'}`}>
+                          {row.hipdataCode || '-'}
+                        </span>
+                        <small>{row.pttypeName}</small>
+                      </td>
+                      <td>
+                        <strong>{row.addressText || '-'}</strong>
+                        {row.tmbName ? <span>ต.{row.tmbName} {row.moopart ? `หมู่ ${Number(row.moopart)}` : ''}</span> : null}
+                      </td>
+                      <td><strong>{row.pcuName || '-'}</strong></td>
+                      <td>
+                        <div className="chip-row">
+                          {row.detectedByAdp && <span className="chip blue">ADP</span>}
+                          {row.detectedByOvstist && <span className="chip amber">Visit</span>}
+                        </div>
+                        <small>{row.telemedItems || '-'}</small>
+                      </td>
+                      <td>
+                        <div className="chip-row">
+                          <span className={`chip ${row.hasCloseEp ? 'green' : 'muted'}`}>{row.hasCloseEp ? 'ปิดสิทธิ์แล้ว' : 'รอปิดสิทธิ์'}</span>
+                        </div>
+                      </td>
+                      <td className="right money">
+                        <strong>{money(row.claimAmount)}</strong>
+                        <span>รวม {money(row.totalAmount)}</span>
+                      </td>
+                      <td><button className="detail-btn" type="button">เปิดใบสั่ง</button></td>
+                    </tr>
+                  ))}
+                  {filteredVisits.length === 0 && (
+                    <tr><td colSpan={9} className="empty-cell">ไม่พบรายการ Telemed ในช่วงวันที่เลือก</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        </div>
+
+        <DetailDrawer
+          row={selectedRow}
+          detail={detail}
+          loading={detailLoading}
+          mode="telemed"
+          onClose={() => { setSelectedRow(null); setDetail(null); }}
+        />
       </section>
     </main>
   );

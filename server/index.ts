@@ -569,6 +569,9 @@ type PcuRow = {
   visits: number;
   patients: number;
   amount: number;
+  claimAmount: number;
+  closeEpCount: number;
+  closeRate: number;
   ofc: number;
   lgo: number;
   uc: number;
@@ -591,15 +594,28 @@ type PcuVisitRow = {
   moopart: string;
   tmbpart: string;
   tmbName: string;
+  detectedByAdp: boolean;
+  detectedByOvstist: boolean;
+  hasCloseEp: boolean;
+  claimAmount: number;
   totalAmount: number;
+  telemedItems: string;
 };
 
 type PcuSummary = {
   startDate: string;
   endDate: string;
-  summary: { totalVisits: number; totalPatients: number; totalAmount: number; pcuCount: number };
+  summary: {
+    totalVisits: number;
+    totalPatients: number;
+    totalAmount: number;
+    totalClaimAmount: number;
+    closeEpCount: number;
+    closeRate: number;
+    pcuCount: number;
+  };
   byPcu: PcuRow[];
-  byDate: Array<{ date: string; visits: number; amount: number }>;
+  byDate: Array<{ date: string; visits: number; amount: number; claimAmount: number; ready: number; pending: number }>;
   recent: PcuVisitRow[];
 };
 
@@ -679,8 +695,27 @@ const PCU_MASTER = [
 const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Promise<PcuSummary> => {
   const connection = await getConnection();
 
+  const telemedDetectedSql = buildTelemedExistsSql('o', 'ov');
+  const telemedAdpSql = `
+    EXISTS (
+      SELECT 1
+      FROM opitemrece oo
+      JOIN s_drugitems d ON d.icode = oo.icode
+      WHERE oo.vn = o.vn
+        AND UPPER(COALESCE(d.nhso_adp_code, '')) = '${TELEMED_ADP_CODE}'
+      LIMIT 1
+    )
+  `;
+  const telemedOvstistSql = `COALESCE(ov.export_code, '') = '${TELEMED_EXPORT_CODE}'`;
+  const hasCloseEpSql = `
+    (
+      COALESCE((SELECT nhso_authen_code FROM nhso_confirm_privilege ncp WHERE ncp.vn = o.vn AND ncp.nhso_status = 'Y' AND ncp.nhso_authen_code REGEXP '^EP' LIMIT 1), '') <> ''
+      OR COALESCE((SELECT claim_code FROM authenhos ah WHERE ah.vn = o.vn AND ah.claim_code REGEXP '^EP' LIMIT 1), '') <> ''
+      OR COALESCE((SELECT auth_code FROM visit_pttype vp WHERE vp.vn = o.vn AND vp.auth_code REGEXP '^EP' LIMIT 1), '') <> ''
+    )
+  `;
+
   try {
-    // กำหนด PCU Code จากตำบล (tmbpart) และหมู่ที่ (moopart) ของคนไข้
     const pcuCodeExpr = `
       CASE
         -- ตำบลตองโขบ (chw=47, amp=15, tmb=01)
@@ -732,12 +767,26 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         COALESCE(pt.moopart, '') AS moopart,
         COALESCE(pt.tmbpart, '') AS tmbpart,
         COALESCE(ta.name, '') AS tmbName,
-        COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount
+        CASE WHEN ${telemedAdpSql} THEN 1 ELSE 0 END AS detectedByAdp,
+        CASE WHEN ${telemedOvstistSql} THEN 1 ELSE 0 END AS detectedByOvstist,
+        CASE WHEN ${hasCloseEpSql} THEN 1 ELSE 0 END AS hasCloseEp,
+        CASE WHEN ${telemedAdpSql} THEN ${TELEMED_CLAIM_AMOUNT} ELSE 0 END AS claimAmount,
+        COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount,
+        COALESCE((
+          SELECT GROUP_CONCAT(DISTINCT COALESCE(sd.name, oo.icode) ORDER BY COALESCE(sd.name, oo.icode) SEPARATOR ', ')
+          FROM opitemrece oo
+          JOIN s_drugitems sd ON sd.icode = oo.icode
+          WHERE oo.vn = o.vn
+            AND UPPER(COALESCE(sd.nhso_adp_code, '')) = '${TELEMED_ADP_CODE}'
+        ), '') AS telemedItems
       FROM ovst o
       JOIN patient pt ON pt.hn = o.hn
       LEFT JOIN pttype ptt ON ptt.pttype = o.pttype
+      LEFT JOIN ovstist ov ON ov.ovstist = o.ovstist
       LEFT JOIN thaiaddress ta ON ta.chwpart = pt.chwpart AND ta.amppart = pt.amppart AND ta.tmbpart = pt.tmbpart AND ta.codetype = '3'
       WHERE o.vstdate BETWEEN ? AND ?
+        AND ${telemedDetectedSql}
+      GROUP BY o.vn
       ${pcuWhere}
       ORDER BY o.vstdate DESC, o.vsttime DESC, o.vn DESC
       LIMIT 20000
@@ -776,17 +825,22 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         moopart,
         tmbpart: toText(row.tmbpart),
         tmbName,
+        detectedByAdp: toNumber(row.detectedByAdp) === 1,
+        detectedByOvstist: toNumber(row.detectedByOvstist) === 1,
+        hasCloseEp: toNumber(row.hasCloseEp) === 1,
+        claimAmount: toNumber(row.claimAmount),
         totalAmount: toNumber(row.totalAmount),
+        telemedItems: toText(row.telemedItems),
       };
     });
 
     // Aggregate by PCU
     const byPcuMap = new Map<string, {
       pcucode: string; pcuName: string; tambol: string; villageCount: number; villages: string[];
-      visits: number; patients: Set<string>; amount: number; ofc: number; lgo: number; uc: number; other: number;
+      visits: number; patients: Set<string>; amount: number; claimAmount: number;
+      closeEpCount: number; ofc: number; lgo: number; uc: number; other: number;
     }>();
 
-    // เริ่มต้น map ด้วย PCU_MASTER เพื่อให้แสดงครบทุกแห่งแม้ยังไม่มี visit
     PCU_MASTER.forEach((m) => {
       byPcuMap.set(m.code, {
         pcucode: m.code,
@@ -797,6 +851,8 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         visits: 0,
         patients: new Set<string>(),
         amount: 0,
+        claimAmount: 0,
+        closeEpCount: 0,
         ofc: 0,
         lgo: 0,
         uc: 0,
@@ -804,40 +860,56 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
       });
     });
 
-    const byDateMap = new Map<string, { date: string; visits: number; amount: number }>();
+    const byDateMap = new Map<string, { date: string; visits: number; amount: number; claimAmount: number; ready: number; pending: number }>();
     const allVisits = new Set<string>();
     const allPatients = new Set<string>();
     let totalAmount = 0;
+    let totalClaimAmount = 0;
+    let totalCloseEp = 0;
 
     detailRows.forEach((row) => {
       allVisits.add(row.vn);
       if (row.hn) allPatients.add(row.hn);
       totalAmount += row.totalAmount;
+      totalClaimAmount += row.claimAmount;
+      if (row.hasCloseEp) totalCloseEp += 1;
 
       const pcu = byPcuMap.get(row.pcucode);
       if (pcu) {
         pcu.visits += 1;
         if (row.hn) pcu.patients.add(row.hn);
         pcu.amount += row.totalAmount;
+        pcu.claimAmount += row.claimAmount;
+        if (row.hasCloseEp) pcu.closeEpCount += 1;
+
         if (row.hipdataCode === 'OFC') pcu.ofc += 1;
         else if (row.hipdataCode === 'LGO') pcu.lgo += 1;
         else if (row.hipdataCode === 'UCS' || row.hipdataCode === 'UC' || row.hipdataCode.startsWith('UC')) pcu.uc += 1;
         else pcu.other += 1;
       }
 
-      const day = byDateMap.get(row.serviceDate) || { date: row.serviceDate, visits: 0, amount: 0 };
+      const day = byDateMap.get(row.serviceDate) || { date: row.serviceDate, visits: 0, amount: 0, claimAmount: 0, ready: 0, pending: 0 };
       day.visits += 1;
       day.amount += row.totalAmount;
+      day.claimAmount += row.claimAmount;
+      if (row.hasCloseEp) day.ready += 1;
+      else day.pending += 1;
       byDateMap.set(row.serviceDate, day);
     });
+
+    const totalVisitCount = allVisits.size;
+    const calcRate = (c: number, t: number) => t > 0 ? Math.round((c / t) * 100) : 0;
 
     return {
       startDate: start,
       endDate: end,
       summary: {
-        totalVisits: allVisits.size,
+        totalVisits: totalVisitCount,
         totalPatients: allPatients.size,
         totalAmount: Number(totalAmount.toFixed(2)),
+        totalClaimAmount: Number(totalClaimAmount.toFixed(2)),
+        closeEpCount: totalCloseEp,
+        closeRate: calcRate(totalCloseEp, totalVisitCount),
         pcuCount: PCU_MASTER.filter((m) => m.code !== 'other').length,
       },
       byPcu: [...byPcuMap.values()]
@@ -850,13 +922,15 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
           visits: p.visits,
           patients: p.patients.size,
           amount: Number(p.amount.toFixed(2)),
+          claimAmount: Number(p.claimAmount.toFixed(2)),
+          closeEpCount: p.closeEpCount,
+          closeRate: calcRate(p.closeEpCount, p.visits),
           ofc: p.ofc,
           lgo: p.lgo,
           uc: p.uc,
           other: p.other,
         }))
         .sort((a, b) => {
-          // ให้อยู่ตามลำดับ master หรือเรียงตาม visit
           if (a.pcucode === 'other') return 1;
           if (b.pcucode === 'other') return -1;
           return b.visits - a.visits;
