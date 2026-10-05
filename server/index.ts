@@ -728,14 +728,10 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         COALESCE(ptt.name, '') AS pttypeName,
         UPPER(COALESCE(ptt.hipdata_code, '')) AS hipdataCode,
         ${pcuCodeExpr} AS pcucode,
+        COALESCE(pt.addrpart, '') AS addrpart,
         COALESCE(pt.moopart, '') AS moopart,
         COALESCE(pt.tmbpart, '') AS tmbpart,
         COALESCE(ta.name, '') AS tmbName,
-        CONCAT_WS(' ',
-          CASE WHEN COALESCE(pt.addrpart, '') <> '' THEN CONCAT('บ้านเลขที่ ', pt.addrpart) END,
-          CASE WHEN COALESCE(pt.moopart, '') <> '' THEN CONCAT('หมู่ ', CAST(pt.moopart AS UNSIGNED)) END,
-          CASE WHEN COALESCE(ta.name, '') <> '' THEN CONCAT('ต.', ta.name) END
-        ) AS addressText,
         COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount
       FROM ovst o
       JOIN patient pt ON pt.hn = o.hn
@@ -754,6 +750,16 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
     const detailRows = (Array.isArray(rows) ? rows : []).map((row: any) => {
       const code = toText(row.pcucode) || 'other';
       const master = masterMap.get(code) || masterMap.get('other')!;
+      const addrpart = toText(row.addrpart);
+      const moopart = toText(row.moopart);
+      const tmbName = toText(row.tmbName);
+
+      const addrSegments: string[] = [];
+      if (addrpart) addrSegments.push(`บ้านเลขที่ ${addrpart}`);
+      if (moopart && Number(moopart) > 0) addrSegments.push(`หมู่ ${Number(moopart)}`);
+      if (tmbName) addrSegments.push(`ต.${tmbName}`);
+      const addressText = addrSegments.join(' ') || 'ไม่ระบุที่อยู่';
+
       return {
         vn: toText(row.vn),
         hn: toText(row.hn),
@@ -766,10 +772,10 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         hipdataCode: toText(row.hipdataCode),
         pcucode: code,
         pcuName: master.name,
-        addressText: toText(row.addressText) || 'ไม่ระบุที่อยู่',
-        moopart: toText(row.moopart),
+        addressText,
+        moopart,
         tmbpart: toText(row.tmbpart),
-        tmbName: toText(row.tmbName),
+        tmbName,
         totalAmount: toNumber(row.totalAmount),
       };
     });
