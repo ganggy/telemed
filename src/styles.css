@@ -977,3 +977,66 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
   color: #3a6474;
 }
 
+.pcu-tambol-tag {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #007a9a;
+  background: rgba(0, 213, 255, 0.14);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.pcu-village-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 0.72rem;
+  color: #55798c;
+}
+
+.pcu-village-toggle {
+  background: transparent;
+  border: 1px solid rgba(0, 189, 227, 0.35);
+  color: #008eb0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pcu-village-toggle:hover {
+  background: rgba(0, 213, 255, 0.15);
+  border-color: #00bde3;
+}
+
+.pcu-village-list-popup {
+  background: #f7fcff;
+  border: 1px solid rgba(0, 189, 227, 0.25);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+.pcu-village-list-popup ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.pcu-village-list-popup li {
+  font-size: 0.72rem;
+  color: #274c60;
+  line-height: 1.3;
+}
+
+

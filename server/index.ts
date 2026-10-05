@@ -563,6 +563,9 @@ const getCivilServiceSummary = async (start: string, end: string, staffOnly = fa
 type PcuRow = {
   pcucode: string;
   pcuName: string;
+  tambol: string;
+  villageCount: number;
+  villages: string[];
   visits: number;
   patients: number;
   amount: number;
@@ -584,6 +587,10 @@ type PcuVisitRow = {
   hipdataCode: string;
   pcucode: string;
   pcuName: string;
+  addressText: string;
+  moopart: string;
+  tmbpart: string;
+  tmbName: string;
   totalAmount: number;
 };
 
@@ -596,27 +603,117 @@ type PcuSummary = {
   recent: PcuVisitRow[];
 };
 
+const PCU_MASTER = [
+  {
+    code: 'koksri',
+    name: 'กลุ่มงานบริการด้านปฐมภูมิฯ (PCU รพ.โคกศรีสุพรรณ)',
+    tambol: 'ตองโขบ',
+    villageCount: 14,
+    villages: [
+      'ม.1 บ้านตองโขบ', 'ม.2 บ้านโคก', 'ม.3 บ้านนาสีนวล', 'ม.4 บ้านนามน',
+      'ม.5 บ้านหนองแข้', 'ม.7 บ้านห้วยแคน', 'ม.8 บ้านตองโขบน้อย', 'ม.9 บ้านห้วยแคนน้อย',
+      'ม.10 บ้านใหม่ศรีสุพรรณ', 'ม.12 บ้านใหม่พัฒนา', 'ม.13 บ้านหนองบัวงาม',
+      'ม.14 บ้านโคกศรีสุพรรณ', 'ม.15 บ้านตองโขบเหนือ', 'ม.16 บ้านใหม่นามน'
+    ],
+  },
+  {
+    code: 'huayheeb',
+    name: 'รพ.สต. บ้านห้วยหีบ',
+    tambol: 'ตองโขบ',
+    villageCount: 4,
+    villages: [
+      'ม.6 บ้านห้วยหีบ', 'ม.11 บ้านห้วยหีบเหนือ', 'ม.17 บ้านนาดอย', 'ม.18 บ้านห้วยหีบรุ่งอรุณ'
+    ],
+  },
+  {
+    code: 'phonkho',
+    name: 'รพ.สต. บ้านโพนค้อ',
+    tambol: 'เหล่าโพนค้อ (ทั้งตำบล)',
+    villageCount: 11,
+    villages: [
+      'ม.1 บ้านโพนค้อ', 'ม.2 บ้านเหล่า', 'ม.3 บ้านโคกขี้เหล็ก', 'ม.4 บ้านหนองเหียน',
+      'ม.5 บ้านดงคู่', 'ม.6 บ้านดอนส้มโฮง', 'ม.7 บ้านดงสง่า', 'ม.8 บ้านลาดไผ่',
+      'ม.9 บ้านโพนค้อเหนือ', 'ม.10 บ้านเหล่าสมบูรณ์', 'ม.11 บ้านเหล่าอุดม'
+    ],
+  },
+  {
+    code: 'muangkhai',
+    name: 'รพ.สต. บ้านม่วงไข่น้อย',
+    tambol: 'ด่านม่วงคำ (ทั้งตำบล)',
+    villageCount: 11,
+    villages: [
+      'ม.1 บ้านด่านม่วงคำ', 'ม.2 บ้านกลาง', 'ม.3 บ้านดานม่วงคำ', 'ม.4 บ้านลาดดู่',
+      'ม.5 บ้านม่วงไข่', 'ม.6 บ้านลาดดู่โคก', 'ม.7 บ้านหนองกอม', 'ม.8 บ้านป่าขาว',
+      'ม.9 บ้านม่วงไข่น้อย', 'ม.10 บ้านโนนปลาเข็ง', 'ม.11 บ้านด่านพัฒนา'
+    ],
+  },
+  {
+    code: 'khoknadi',
+    name: 'รพ.สต. บ้านโคกนาดี',
+    tambol: 'แมดนาท่ม',
+    villageCount: 7,
+    villages: [
+      'ม.1 บ้านแมด', 'ม.2 บ้านนาท่ม', 'ม.3 บ้านดอนกกยาง', 'ม.5 บ้านหนองผือ',
+      'ม.6 บ้านโคกนาดี', 'ม.7 บ้านนาท่มพัฒนา', 'ม.13 บ้านแมดพัฒนา'
+    ],
+  },
+  {
+    code: 'phonthong',
+    name: 'รพ.สต. บ้านโพนทองวัฒนา',
+    tambol: 'แมดนาท่ม',
+    villageCount: 6,
+    villages: [
+      'ม.4 บ้านนาเจริญ', 'ม.8 บ้านโนนน้ำคำ', 'ม.9 บ้านพรหมศรีธาตุ',
+      'ม.10 บ้านน้อยดอนปอ', 'ม.11 บ้านโพนทองวัฒนา', 'ม.12 บ้านนาเจริญพัฒนา'
+    ],
+  },
+  {
+    code: 'other',
+    name: 'นอกเขตรับผิดชอบ / อื่นๆ',
+    tambol: 'นอกพื้นที่ / ไม่ระบุหมู่',
+    villageCount: 0,
+    villages: ['ผู้ป่วยนอกเขตอำเภอโคกศรีสุพรรณ หรือไม่ระบุตำบล/หมู่'],
+  },
+];
+
 const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Promise<PcuSummary> => {
   const connection = await getConnection();
 
-  // ตรวจว่า table `pcu` มีอยู่ใน schema ไหม
-  const [tableCheck] = await connection.query(
-    `SELECT COUNT(*) AS cnt FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'pcu'`
-  ) as any[];
-  const hasPcuTable = Number((tableCheck as any[])[0]?.cnt) > 0;
-
   try {
-    // patient.hcode = รหัส รพ.สต. ที่ผู้ป่วยลงทะเบียนประจำ (สังกัดตามที่อยู่)
-    const pcuWhere = pcuFilter ? `AND COALESCE(pt.hcode, '') = ?` : '';
+    // กำหนด PCU Code จากตำบล (tmbpart) และหมู่ที่ (moopart) ของคนไข้
+    const pcuCodeExpr = `
+      CASE
+        -- ตำบลตองโขบ (chw=47, amp=15, tmb=01)
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '01' AND CAST(pt.moopart AS UNSIGNED) IN (6, 11, 17, 18)
+          THEN 'huayheeb'
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '01' AND CAST(pt.moopart AS UNSIGNED) IN (1, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13, 14, 15, 16)
+          THEN 'koksri'
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '01'
+          THEN 'koksri'
+
+        -- ตำบลเหล่าโพนค้อ (chw=47, amp=15, tmb=02 ทั้งตำบล)
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '02'
+          THEN 'phonkho'
+
+        -- ตำบลด่านม่วงคำ (chw=47, amp=15, tmb=03 ทั้งตำบล)
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '03'
+          THEN 'muangkhai'
+
+        -- ตำบลแมดนาท่ม (chw=47, amp=15, tmb=04)
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '04' AND CAST(pt.moopart AS UNSIGNED) IN (1, 2, 3, 5, 6, 7, 13)
+          THEN 'khoknadi'
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '04' AND CAST(pt.moopart AS UNSIGNED) IN (4, 8, 9, 10, 11, 12)
+          THEN 'phonthong'
+        WHEN pt.chwpart = '47' AND pt.amppart = '15' AND pt.tmbpart = '04'
+          THEN 'khoknadi'
+
+        ELSE 'other'
+      END
+    `;
+
+    const pcuWhere = pcuFilter ? `HAVING pcucode = ?` : '';
     const params: unknown[] = [start, end];
     if (pcuFilter) params.push(pcuFilter);
-
-    const pcuNameExpr = hasPcuTable
-      ? `COALESCE(pcu.name, pt.hcode, 'ไม่ระบุ')`
-      : `COALESCE(pt.hcode, 'ไม่ระบุ')`;
-    const pcuJoin = hasPcuTable
-      ? `LEFT JOIN pcu ON pcu.pcucode = pt.hcode`
-      : '';
 
     const [rows] = await connection.query(
       `
@@ -630,44 +727,77 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         o.pttype,
         COALESCE(ptt.name, '') AS pttypeName,
         UPPER(COALESCE(ptt.hipdata_code, '')) AS hipdataCode,
-        COALESCE(pt.hcode, '') AS pcucode,
-        ${pcuNameExpr} AS pcuName,
+        ${pcuCodeExpr} AS pcucode,
+        COALESCE(pt.moopart, '') AS moopart,
+        COALESCE(pt.tmbpart, '') AS tmbpart,
+        COALESCE(ta.name, '') AS tmbName,
+        CONCAT_WS(' ',
+          CASE WHEN COALESCE(pt.addrpart, '') <> '' THEN CONCAT('บ้านเลขที่ ', pt.addrpart) END,
+          CASE WHEN COALESCE(pt.moopart, '') <> '' THEN CONCAT('หมู่ ', CAST(pt.moopart AS UNSIGNED)) END,
+          CASE WHEN COALESCE(ta.name, '') <> '' THEN CONCAT('ต.', ta.name) END
+        ) AS addressText,
         COALESCE((SELECT SUM(COALESCE(oi.sum_price, oi.qty * oi.unitprice, 0)) FROM opitemrece oi WHERE oi.vn = o.vn), 0) AS totalAmount
       FROM ovst o
       JOIN patient pt ON pt.hn = o.hn
       LEFT JOIN pttype ptt ON ptt.pttype = o.pttype
-      ${pcuJoin}
+      LEFT JOIN thaiaddress ta ON ta.chwpart = pt.chwpart AND ta.amppart = pt.amppart AND ta.tmbpart = pt.tmbpart AND ta.codetype = '3'
       WHERE o.vstdate BETWEEN ? AND ?
-        AND COALESCE(pt.hcode, '') <> ''
-        ${pcuWhere}
+      ${pcuWhere}
       ORDER BY o.vstdate DESC, o.vsttime DESC, o.vn DESC
       LIMIT 20000
       `,
       params
     );
 
+    const masterMap = new Map(PCU_MASTER.map((m) => [m.code, m]));
 
-
-    const detailRows = (Array.isArray(rows) ? rows : []).map((row: any) => ({
-      vn: toText(row.vn),
-      hn: toText(row.hn),
-      serviceDate: toText(row.serviceDate),
-      serviceTime: toText(row.serviceTime),
-      cid: toText(row.cid),
-      patientName: toText(row.patientName),
-      pttype: toText(row.pttype),
-      pttypeName: toText(row.pttypeName),
-      hipdataCode: toText(row.hipdataCode),
-      pcucode: toText(row.pcucode),
-      pcuName: toText(row.pcuName),
-      totalAmount: toNumber(row.totalAmount),
-    }));
+    const detailRows = (Array.isArray(rows) ? rows : []).map((row: any) => {
+      const code = toText(row.pcucode) || 'other';
+      const master = masterMap.get(code) || masterMap.get('other')!;
+      return {
+        vn: toText(row.vn),
+        hn: toText(row.hn),
+        serviceDate: toText(row.serviceDate),
+        serviceTime: toText(row.serviceTime),
+        cid: toText(row.cid),
+        patientName: toText(row.patientName),
+        pttype: toText(row.pttype),
+        pttypeName: toText(row.pttypeName),
+        hipdataCode: toText(row.hipdataCode),
+        pcucode: code,
+        pcuName: master.name,
+        addressText: toText(row.addressText) || 'ไม่ระบุที่อยู่',
+        moopart: toText(row.moopart),
+        tmbpart: toText(row.tmbpart),
+        tmbName: toText(row.tmbName),
+        totalAmount: toNumber(row.totalAmount),
+      };
+    });
 
     // Aggregate by PCU
     const byPcuMap = new Map<string, {
-      pcucode: string; pcuName: string; visits: number;
-      patients: Set<string>; amount: number; ofc: number; lgo: number; uc: number; other: number;
+      pcucode: string; pcuName: string; tambol: string; villageCount: number; villages: string[];
+      visits: number; patients: Set<string>; amount: number; ofc: number; lgo: number; uc: number; other: number;
     }>();
+
+    // เริ่มต้น map ด้วย PCU_MASTER เพื่อให้แสดงครบทุกแห่งแม้ยังไม่มี visit
+    PCU_MASTER.forEach((m) => {
+      byPcuMap.set(m.code, {
+        pcucode: m.code,
+        pcuName: m.name,
+        tambol: m.tambol,
+        villageCount: m.villageCount,
+        villages: m.villages,
+        visits: 0,
+        patients: new Set<string>(),
+        amount: 0,
+        ofc: 0,
+        lgo: 0,
+        uc: 0,
+        other: 0,
+      });
+    });
+
     const byDateMap = new Map<string, { date: string; visits: number; amount: number }>();
     const allVisits = new Set<string>();
     const allPatients = new Set<string>();
@@ -678,16 +808,16 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
       if (row.hn) allPatients.add(row.hn);
       totalAmount += row.totalAmount;
 
-      const key = row.pcucode || 'ไม่ระบุ';
-      const pcu = byPcuMap.get(key) || { pcucode: key, pcuName: row.pcuName, visits: 0, patients: new Set<string>(), amount: 0, ofc: 0, lgo: 0, uc: 0, other: 0 };
-      pcu.visits += 1;
-      if (row.hn) pcu.patients.add(row.hn);
-      pcu.amount += row.totalAmount;
-      if (row.hipdataCode === 'OFC') pcu.ofc += 1;
-      else if (row.hipdataCode === 'LGO') pcu.lgo += 1;
-      else if (row.hipdataCode === 'UCS' || row.hipdataCode === 'UC' || row.hipdataCode.startsWith('UC')) pcu.uc += 1;
-      else pcu.other += 1;
-      byPcuMap.set(key, pcu);
+      const pcu = byPcuMap.get(row.pcucode);
+      if (pcu) {
+        pcu.visits += 1;
+        if (row.hn) pcu.patients.add(row.hn);
+        pcu.amount += row.totalAmount;
+        if (row.hipdataCode === 'OFC') pcu.ofc += 1;
+        else if (row.hipdataCode === 'LGO') pcu.lgo += 1;
+        else if (row.hipdataCode === 'UCS' || row.hipdataCode === 'UC' || row.hipdataCode.startsWith('UC')) pcu.uc += 1;
+        else pcu.other += 1;
+      }
 
       const day = byDateMap.get(row.serviceDate) || { date: row.serviceDate, visits: 0, amount: 0 };
       day.visits += 1;
@@ -702,12 +832,15 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
         totalVisits: allVisits.size,
         totalPatients: allPatients.size,
         totalAmount: Number(totalAmount.toFixed(2)),
-        pcuCount: byPcuMap.size,
+        pcuCount: PCU_MASTER.filter((m) => m.code !== 'other').length,
       },
       byPcu: [...byPcuMap.values()]
         .map((p) => ({
           pcucode: p.pcucode,
           pcuName: p.pcuName,
+          tambol: p.tambol,
+          villageCount: p.villageCount,
+          villages: p.villages,
           visits: p.visits,
           patients: p.patients.size,
           amount: Number(p.amount.toFixed(2)),
@@ -716,7 +849,12 @@ const getPcuSummary = async (start: string, end: string, pcuFilter?: string): Pr
           uc: p.uc,
           other: p.other,
         }))
-        .sort((a, b) => b.visits - a.visits),
+        .sort((a, b) => {
+          // ให้อยู่ตามลำดับ master หรือเรียงตาม visit
+          if (a.pcucode === 'other') return 1;
+          if (b.pcucode === 'other') return -1;
+          return b.visits - a.visits;
+        }),
       byDate: [...byDateMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
       recent: detailRows.slice(0, 100),
     };

@@ -470,6 +470,9 @@ function App() {
 type PcuRow = {
   pcucode: string;
   pcuName: string;
+  tambol: string;
+  villageCount: number;
+  villages: string[];
   visits: number;
   patients: number;
   amount: number;
@@ -491,6 +494,10 @@ type PcuVisitRow = {
   hipdataCode: string;
   pcucode: string;
   pcuName: string;
+  addressText: string;
+  moopart: string;
+  tmbpart: string;
+  tmbName: string;
   totalAmount: number;
 };
 
@@ -517,6 +524,7 @@ function PcuMonitor() {
   const [endDate, setEndDate] = useState(today);
   const [data, setData] = useState<PcuSummary>(emptyPcuData);
   const [selectedPcu, setSelectedPcu] = useState<string | null>(null);
+  const [expandedVillages, setExpandedVillages] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -543,6 +551,11 @@ function PcuMonitor() {
     setSelectedPcu(next);
   };
 
+  const toggleVillages = (e: React.MouseEvent, code: string) => {
+    e.stopPropagation();
+    setExpandedVillages((curr) => (curr === code ? null : code));
+  };
+
   const filteredVisits = useMemo(() =>
     selectedPcu ? data.recent.filter((r) => r.pcucode === selectedPcu) : data.recent,
     [data.recent, selectedPcu]
@@ -557,8 +570,8 @@ function PcuMonitor() {
     <main className="dashboard pcu-dashboard">
       <header className="topbar">
         <div>
-          <h1>PCU Monitor · รพ.สต.</h1>
-          <p>ติดตามจำนวน visit แยกราย รพ.สต. โดยอ้างอิงจาก <strong>ที่อยู่ของคนไข้</strong> (field <code>hcode</code> ในตาราง patient) ซึ่งระบุ รพ.สต. ที่คนไข้ลงทะเบียนประจำตามพื้นที่</p>
+          <h1>PCU Monitor · รพ.สต. & หน่วยบริการปฐมภูมิ</h1>
+          <p>จัดกลุ่มและติดตามจำนวน visit <strong>แยกตามที่อยู่ผู้ป่วย (ตำบล & หมู่ที่)</strong> เข้าสู่ รพ.สต. และหน่วยบริการปฐมภูมิที่รับผิดชอบ</p>
         </div>
         <section className="filters">
           <label>
@@ -579,41 +592,74 @@ function PcuMonitor() {
       <section className="kpi-grid">
         <Metric label="Visit ทั้งหมด" value={numberText(s.totalVisits)} detail={`${numberText(s.totalPatients)} ผู้ป่วย`} tone="blue" />
         <Metric label="มูลค่ารวม" value={money(s.totalAmount)} detail={`${s.totalVisits > 0 ? money(s.totalAmount / s.totalVisits) : '฿0.00'} / visit เฉลี่ย`} tone="cyan" />
-        <Metric label="จำนวน รพ.สต." value={numberText(s.pcuCount)} detail="หน่วยบริการที่มีข้อมูล" tone="green" />
+        <Metric label="หน่วยบริการปฐมภูมิ" value={`${numberText(s.pcuCount)} แห่ง`} detail="ครอบคลุม 4 ตำบล อ.โคกศรีสุพรรณ" tone="green" />
         {activePcu ? (
           <Metric label={`${activePcu.pcuName}`} value={numberText(activePcu.visits)} detail={`${numberText(activePcu.patients)} คน | ${money(activePcu.amount)}`} tone="amber" />
         ) : (
-          <Metric label="คลิก รพ.สต." value="เพื่อกรอง" detail="คลิกที่การ์ด รพ.สต. ด้านล่าง" tone="amber" />
+          <Metric label="คลิกเลือกหน่วยบริการ" value="เพื่อกรองรายการ" detail="คลิกที่การ์ดเพื่อดูเฉพาะหน่วยบริการนั้น" tone="amber" />
         )}
       </section>
 
       {/* PCU cards */}
       <section className="pcu-cards">
-        {data.byPcu.map((pcu) => (
-          <button
-            key={pcu.pcucode}
-            type="button"
-            className={`pcu-card ${selectedPcu === pcu.pcucode ? 'selected' : ''}`}
-            onClick={() => selectPcu(pcu.pcucode)}
-          >
-            <div className="pcu-card-top">
-              <strong>{pcu.pcuName || pcu.pcucode}</strong>
-              <em>{numberText(pcu.visits)} visit</em>
+        {data.byPcu.map((pcu) => {
+          const isSelected = selectedPcu === pcu.pcucode;
+          const showVillages = expandedVillages === pcu.pcucode;
+          return (
+            <div
+              key={pcu.pcucode}
+              className={`pcu-card ${isSelected ? 'selected' : ''}`}
+              onClick={() => selectPcu(pcu.pcucode)}
+              role="button"
+              tabIndex={0}
+            >
+              <div className="pcu-card-top">
+                <div>
+                  <span className="pcu-tambol-tag">{pcu.tambol}</span>
+                  <strong>{pcu.pcuName}</strong>
+                </div>
+                <em>{numberText(pcu.visits)} visit</em>
+              </div>
+
+              {pcu.villageCount > 0 && (
+                <div className="pcu-village-info">
+                  <span>รับผิดชอบ {pcu.villageCount} หมู่บ้าน</span>
+                  <button
+                    type="button"
+                    className="pcu-village-toggle"
+                    onClick={(e) => toggleVillages(e, pcu.pcucode)}
+                  >
+                    {showVillages ? 'ซ่อนรายชื่อ' : 'ดูรายชื่อหมู่'}
+                  </button>
+                </div>
+              )}
+
+              {showVillages && pcu.villages && (
+                <div className="pcu-village-list-popup">
+                  <ul>
+                    {pcu.villages.map((v, idx) => (
+                      <li key={idx}>{v}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="pcu-bar-wrap">
+                <i className="pcu-bar" style={{ width: `${Math.max((pcu.visits / maxPcuVisits) * 100, 4)}%` }} />
+              </div>
+
+              <div className="pcu-card-footer">
+                <span>OFC <b>{numberText(pcu.ofc)}</b></span>
+                <span>LGO <b>{numberText(pcu.lgo)}</b></span>
+                <span>UC <b>{numberText(pcu.uc)}</b></span>
+                <span>อื่นๆ <b>{numberText(pcu.other)}</b></span>
+              </div>
+              <div className="pcu-card-amount">{money(pcu.amount)}</div>
             </div>
-            <div className="pcu-bar-wrap">
-              <i className="pcu-bar" style={{ width: `${Math.max((pcu.visits / maxPcuVisits) * 100, 4)}%` }} />
-            </div>
-            <div className="pcu-card-footer">
-              <span>OFC <b>{numberText(pcu.ofc)}</b></span>
-              <span>LGO <b>{numberText(pcu.lgo)}</b></span>
-              <span>UC <b>{numberText(pcu.uc)}</b></span>
-              <span>อื่นๆ <b>{numberText(pcu.other)}</b></span>
-            </div>
-            <div className="pcu-card-amount">{money(pcu.amount)}</div>
-          </button>
-        ))}
+          );
+        })}
         {data.byPcu.length === 0 && !loading && (
-          <Empty text="ไม่พบข้อมูล รพ.สต. ในช่วงวันที่เลือก — อาจยังไม่มีการบันทึก hcode ในตาราง patient หรือผู้ป่วยในช่วงนี้ไม่มีที่อยู่ระบุ รพ.สต." />
+          <Empty text="ไม่พบข้อมูลผู้รับบริการในช่วงวันที่เลือก" />
         )}
       </section>
 
@@ -637,11 +683,11 @@ function PcuMonitor() {
 
         <Panel
           title={selectedPcu ? `รายการ: ${activePcu?.pcuName || selectedPcu}` : 'รายการ visit ล่าสุด'}
-          subtitle={selectedPcu ? 'คลิก รพ.สต. อีกครั้งเพื่อยกเลิกตัวกรอง' : 'คลิกที่การ์ด รพ.สต. เพื่อกรองเฉพาะหน่วย'}
+          subtitle={selectedPcu ? `คลิก รพ.สต. อีกครั้งเพื่อยกเลิกตัวกรอง (${activePcu?.tambol || ''})` : 'คลิกที่การ์ด รพ.สต. เพื่อกรองเฉพาะหน่วย'}
           end={`${numberText(filteredVisits.length)} รายการ`}
         >
           {selectedPcu && (
-            <button type="button" className="pcu-clear-btn" onClick={() => setSelectedPcu(null)}>× ล้างตัวกรอง รพ.สต.</button>
+            <button type="button" className="pcu-clear-btn" onClick={() => setSelectedPcu(null)}>× ล้างตัวกรอง ({activePcu?.pcuName})</button>
           )}
           <div className="table-wrap">
             <table className="pcu-table">
@@ -650,7 +696,8 @@ function PcuMonitor() {
                   <th>วันที่ / VN</th>
                   <th>ผู้รับบริการ</th>
                   <th>สิทธิ์</th>
-                  <th>รพ.สต.</th>
+                  <th>ที่อยู่ตามทะเบียน</th>
+                  <th>หน่วยบริการปฐมภูมิ</th>
                   <th className="right">มูลค่า</th>
                 </tr>
               </thead>
@@ -665,12 +712,16 @@ function PcuMonitor() {
                       </span>
                       <small>{row.pttypeName}</small>
                     </td>
-                    <td><strong>{row.pcuName || row.pcucode || '-'}</strong><span>{row.pcucode}</span></td>
+                    <td>
+                      <strong>{row.addressText || '-'}</strong>
+                      {row.tmbName ? <span>ต.{row.tmbName} {row.moopart ? `หมู่ ${Number(row.moopart)}` : ''}</span> : null}
+                    </td>
+                    <td><strong>{row.pcuName || '-'}</strong></td>
                     <td className="right money">{money(row.totalAmount)}</td>
                   </tr>
                 ))}
                 {filteredVisits.length === 0 && (
-                  <tr><td colSpan={5} className="empty-cell">ไม่พบรายการ</td></tr>
+                  <tr><td colSpan={6} className="empty-cell">ไม่พบรายการ</td></tr>
                 )}
               </tbody>
             </table>
