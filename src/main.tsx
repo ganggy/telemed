@@ -2,6 +2,20 @@ import { StrictMode, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 
+type AuthUser = {
+  loginname: string;
+  name: string;
+  doctorcode: string | null;
+  providerProfile?: {
+    hash_cid?: string;
+    name_th?: string;
+    organization?: string;
+    license_id?: string;
+    [key: string]: any;
+  };
+  loginAt?: string;
+};
+
 type TelemedRow = {
   vn: string;
   hn: string;
@@ -215,7 +229,16 @@ const getDefaultApiBaseUrl = () => {
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || getDefaultApiBaseUrl()).replace(/\/$/, '');
 
 const fetchApi = async (path: string, options?: RequestInit) => {
-  const response = await fetch(`${apiBaseUrl}${path}`, options);
+  const sessionId = localStorage.getItem('hcc_session_id');
+  const headers = new Headers(options?.headers);
+  if (sessionId) {
+    headers.set('Authorization', `Bearer ${sessionId}`);
+  }
+
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    headers,
+  });
   const text = await response.text();
   const contentType = response.headers.get('content-type') || '';
 
@@ -238,6 +261,64 @@ function App() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
+    try {
+      const stored = localStorage.getItem('hcc_auth_session');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const checkAuth = async () => {
+    const sessionId = localStorage.getItem('hcc_session_id');
+    if (!sessionId) {
+      setCurrentUser(null);
+      return;
+    }
+    try {
+      const res = await fetchApi('/api/auth/session');
+      if (res.authenticated && res.user) {
+        setCurrentUser(res.user);
+        localStorage.setItem('hcc_auth_session', JSON.stringify(res.user));
+      } else {
+        setCurrentUser(null);
+        localStorage.removeItem('hcc_auth_session');
+        localStorage.removeItem('hcc_session_id');
+      }
+    } catch {
+      // Offline fallback: keep cached session if valid
+    }
+  };
+
+  const handleMophLogin = () => {
+    window.location.href = `${apiBaseUrl}/api/auth/moph/login`;
+  };
+
+  const handleLogout = async () => {
+    try {
+      const sessionId = localStorage.getItem('hcc_session_id');
+      if (sessionId) {
+        await fetchApi('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      localStorage.removeItem('hcc_auth_session');
+      localStorage.removeItem('hcc_session_id');
+      setCurrentUser(null);
+    }
+  };
+
+  useEffect(() => {
+    void checkAuth();
+  }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -301,6 +382,27 @@ function App() {
           <button className={page === 'civil' ? 'active' : ''} onClick={() => setPage('civil')}>สิทธิ์ข้าราชการ</button>
           <button className={page === 'pcu' ? 'active' : ''} onClick={() => setPage('pcu')}>รพ.สต.</button>
         </nav>
+
+        <div className="brand-user-card">
+          {currentUser ? (
+            <div className="user-profile-badge">
+              <div className="user-avatar-dot"></div>
+              <div className="user-info-text">
+                <strong title={currentUser.name}>{currentUser.name}</strong>
+                <span>@{currentUser.loginname} {currentUser.doctorcode ? `(ว.${currentUser.doctorcode})` : ''}</span>
+              </div>
+              <button className="logout-btn" onClick={handleLogout} title="ออกจากระบบ">
+                ออกจากระบบ
+              </button>
+            </div>
+          ) : (
+            <button className="moph-login-btn" onClick={handleMophLogin}>
+              <span className="moph-icon">🩺</span>
+              <span>เข้าสู่ระบบด้วยหมอพร้อม</span>
+              <small>MOPH Provider ID</small>
+            </button>
+          )}
+        </div>
       </aside>
 
       {page === 'telemed' ? (

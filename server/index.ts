@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
@@ -11,6 +12,32 @@ const fdhEnvPath = 'D:\\fdh_rect\\.env';
 if (fs.existsSync(fdhEnvPath)) {
   dotenv.config({ path: fdhEnvPath, override: false });
 }
+
+// ─── MOPH Provider ID / Health ID Credentials & Config ───────────────────────
+const HEALTH_ID_CLIENT_ID = process.env.HEALTH_ID_CLIENT_ID || '01a0faf5-2888-758a-a1c3-d885143cf2e4';
+const HEALTH_ID_CLIENT_SECRET = process.env.HEALTH_ID_CLIENT_SECRET || 'a92c05aeec078f4cd9da04d34dd3e5ebe1ea0942';
+const PROVIDER_ID_CLIENT_ID = process.env.PROVIDER_ID_CLIENT_ID || '68fdef16-2121-451b-952c-07a9aaf4d1f0';
+const PROVIDER_ID_CLIENT_SECRET = process.env.PROVIDER_ID_CLIENT_SECRET || '6bFJzxrV1SnBwEwphUK9vcAPXiWFlzX8';
+
+type UserSession = {
+  sessionId: string;
+  loginname: string;
+  name: string;
+  doctorcode: string | null;
+  cid: string | null;
+  providerProfile: {
+    hash_cid?: string;
+    name_th?: string;
+    organization?: string;
+    license_id?: string;
+    [key: string]: any;
+  };
+  loginAt: string;
+  expiresAt: number;
+};
+
+// In-memory sessions store: sessionId -> UserSession
+const activeSessions = new Map<string, UserSession>();
 
 const readFdhBusinessRules = () => {
   const rulesPath = 'D:\\fdh_rect\\server\\config\\business_rules.json';
@@ -1056,6 +1083,355 @@ app.get('/api/pcu/summary', async (req, res) => {
     console.error('GET /api/pcu/summary error:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'โหลดข้อมูล รพ.สต. ไม่สำเร็จ' });
   }
+});
+
+// ─── MOPH Provider ID Auth Routes ──────────────────────────────────────────
+
+const getCallbackUrl = (req: express.Request) => {
+  if (process.env.MOPH_REDIRECT_URI) return process.env.MOPH_REDIRECT_URI;
+  const host = req.get('host') || 'localhost:3516';
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  return `${proto}://${host}/api/auth/moph/callback`;
+};
+
+const getFrontendUrl = (req: express.Request) => {
+  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL;
+  const hostHeader = req.get('host') || 'localhost:3516';
+  const hostname = hostHeader.split(':')[0];
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  return `${proto}://${hostname}:3517`;
+};
+
+// Helper: match opduser in HOSxP
+const matchOpdUser = async (profile: any) => {
+  const connection = await getConnection();
+  try {
+    const hashCid = String(profile.hash_cid || '').trim();
+    const nameTh = String(profile.name_th || '').trim();
+    const licenseId = String(profile.license_id || '').trim();
+
+    // 1. ตรวจสอบ hash_cid กับ opduser: SHA2(REPLACE(cid, '-', ''), 256)
+    if (hashCid) {
+      const [rows]: any = await connection.query(
+        `SELECT loginname, name, doctorcode, cid, groupname
+         FROM opduser
+         WHERE SHA2(REPLACE(cid, '-', ''), 256) = ?
+           AND (account_disable IS NULL OR account_disable != 'Y')
+         LIMIT 1`,
+        [hashCid]
+      );
+      if (Array.isArray(rows) && rows.length > 0) {
+        return { user: rows[0], matchBy: 'hash_cid' };
+      }
+    }
+
+    // 2. Fallback: จับคู่ด้วย license_id (เลข ว. หรือใบประกอบวิชาชีพ) กับตาราง doctor -> opduser
+    if (licenseId) {
+      const cleanLicense = licenseId.replace(/[^0-9a-zA-Zก-๙]/g, '');
+      const [rows]: any = await connection.query(
+        `SELECT o.loginname, o.name, o.doctorcode, o.cid, o.groupname, d.licenseno
+         FROM opduser o
+         JOIN doctor d ON d.code = o.doctorcode
+         WHERE (
+           d.licenseno = ?
+           OR REPLACE(REPLACE(d.licenseno, '-', ''), ' ', '') = ?
+           OR d.licenseno LIKE ?
+         )
+         AND (o.account_disable IS NULL OR o.account_disable != 'Y')
+         LIMIT 1`,
+        [licenseId, cleanLicense, `%${cleanLicense}%`]
+      );
+      if (Array.isArray(rows) && rows.length > 0) {
+        return { user: rows[0], matchBy: 'license_id' };
+      }
+    }
+
+    // 3. Fallback: จับคู่ด้วยชื่อ-นามสกุล (name_th)
+    if (nameTh) {
+      // ตัดคำนำหน้าทั่วไป (นาย, นาง, นางสาว, นพ., พญ., นายแพทย์, แพทย์หญิง, ทพ., ทพญ., เภสัชกร)
+      const cleanName = nameTh
+        .replace(/^(นายแพทย์|แพทย์หญิง|นพ\.|พญ\.|ทพ\.|ทพญ\.|ทันตแพทย์|เภสัชกร|ภก\.|ภญ\.|นาย|นางสาว|นาง|\s+)/g, '')
+        .trim();
+      const parts = cleanName.split(/\s+/).filter(Boolean);
+      const firstName = parts[0] || '';
+      const lastName = parts[parts.length - 1] || '';
+
+      const [rows]: any = await connection.query(
+        `SELECT o.loginname, o.name, o.doctorcode, o.cid, o.groupname
+         FROM opduser o
+         WHERE (
+           o.name LIKE ?
+           OR (o.name LIKE ? AND o.name LIKE ?)
+         )
+         AND (o.account_disable IS NULL OR o.account_disable != 'Y')
+         LIMIT 1`,
+        [`%${cleanName}%`, `%${firstName}%`, `%${lastName}%`]
+      );
+      if (Array.isArray(rows) && rows.length > 0) {
+        return { user: rows[0], matchBy: 'name_th' };
+      }
+    }
+
+    return null;
+  } finally {
+    connection.release();
+  }
+};
+
+// Step 1: Redirect Login URL
+app.get('/api/auth/moph/login', (req, res) => {
+  const callbackUrl = getCallbackUrl(req);
+  const mophLoginUrl = `https://moph.id.th/oauth/redirect?client_id=${encodeURIComponent(HEALTH_ID_CLIENT_ID)}&redirect_uri=${encodeURIComponent(callbackUrl)}&response_type=code`;
+  res.redirect(mophLoginUrl);
+});
+
+// Step 2, 3, 4: OAuth Callback
+app.get('/api/auth/moph/callback', async (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+  const code = toText(req.query.code);
+  const errorParam = toText(req.query.error || req.query.error_description);
+  const frontendUrl = getFrontendUrl(req);
+
+  if (errorParam || !code) {
+    const errorMsg = errorParam || 'ไม่พบ authorization code จากระบบหมอพร้อม (MOPH ID)';
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html lang="th">
+      <head>
+        <meta charset="utf-8">
+        <title>เข้าสู่ระบบไม่สำเร็จ</title>
+        <style>
+          body { font-family: 'Noto Sans Thai', sans-serif; background: #f0f7fb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+          .card { background: white; padding: 32px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); max-width: 440px; text-align: center; }
+          h2 { color: #dc2626; margin-top: 0; }
+          p { color: #475569; line-height: 1.6; }
+          a { display: inline-block; margin-top: 16px; padding: 10px 20px; background: #0284c7; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>เข้าสู่ระบบไม่สำเร็จ</h2>
+          <p>${errorMsg}</p>
+          <a href="${frontendUrl}">กลับสู่หน้าหลัก</a>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
+  const userAgent = req.get('user-agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  const callbackUrl = getCallbackUrl(req);
+
+  try {
+    // Step 2: Exchange Health ID Token
+    const healthTokenRes = await fetch('https://moph.id.th/api/v1/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': userAgent,
+      },
+      body: JSON.stringify({
+        client_id: HEALTH_ID_CLIENT_ID,
+        client_secret: HEALTH_ID_CLIENT_SECRET,
+        code,
+        redirect_uri: callbackUrl,
+        grant_type: 'authorization_code',
+      }),
+    });
+
+    const healthTokenJson: any = await healthTokenRes.json();
+    const healthAccessToken = healthTokenJson?.data?.access_token || healthTokenJson?.access_token;
+
+    if (!healthAccessToken) {
+      console.error('Health ID Token Exchange Failed:', healthTokenJson);
+      throw new Error(healthTokenJson?.message || healthTokenJson?.error || 'ไม่สามารถขอ Health ID Access Token ได้');
+    }
+
+    // Step 3: Exchange Provider ID Token
+    const providerTokenRes = await fetch('https://provider.id.th/api/v1/services/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': userAgent,
+      },
+      body: JSON.stringify({
+        client_id: PROVIDER_ID_CLIENT_ID,
+        secret_key: PROVIDER_ID_CLIENT_SECRET,
+        token_by: 'Health ID',
+        token: healthAccessToken,
+      }),
+    });
+
+    const providerTokenJson: any = await providerTokenRes.json();
+    const providerAccessToken = providerTokenJson?.data?.access_token || providerTokenJson?.access_token;
+
+    if (!providerAccessToken) {
+      console.error('Provider ID Token Exchange Failed:', providerTokenJson);
+      throw new Error(providerTokenJson?.message || providerTokenJson?.error || 'ไม่สามารถขอ Provider ID Token ได้');
+    }
+
+    // Step 4: Get Provider Profile
+    const profileRes = await fetch('https://provider.id.th/api/v1/services/profile', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${providerAccessToken}`,
+        'client-id': PROVIDER_ID_CLIENT_ID,
+        'secret-key': PROVIDER_ID_CLIENT_SECRET,
+        'User-Agent': userAgent,
+      },
+    });
+
+    const profileJson: any = await profileRes.json();
+    const profile = profileJson?.data || profileJson;
+
+    if (!profile || (!profile.hash_cid && !profile.name_th && !profile.cid)) {
+      console.error('Get Provider Profile Failed:', profileJson);
+      throw new Error(profileJson?.message || 'ไม่สามารถดึงข้อมูล Provider Profile จากระบบหมอพร้อมได้');
+    }
+
+    // Step 5: จับคู่ผู้ใช้งานกับฐานข้อมูล HOSxP (opduser)
+    const matchResult = await matchOpdUser(profile);
+
+    if (!matchResult) {
+      return res.status(403).send(`
+        <!DOCTYPE html>
+        <html lang="th">
+        <head>
+          <meta charset="utf-8">
+          <title>ไม่พบข้อมูลผู้ใช้งานในระบบ HOSxP</title>
+          <style>
+            body { font-family: 'Noto Sans Thai', sans-serif; background: #f0f7fb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .card { background: white; padding: 32px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); max-width: 500px; text-align: center; }
+            h2 { color: #d97706; margin-top: 0; }
+            p { color: #475569; line-height: 1.6; font-size: 0.95rem; }
+            .info-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin: 16px 0; text-align: left; font-size: 0.88rem; }
+            a { display: inline-block; margin-top: 16px; padding: 10px 20px; background: #0284c7; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>ไม่พบสิทธิ์การใช้งานใน HOSxP</h2>
+            <p>ยืนยันตัวตนผ่านหมอพร้อม (MOPH Provider ID) สำเร็จแล้ว แต่ไม่พบข้อมูลผู้ใช้งานที่เชื่อมโยงในตารางผู้ใช้งาน (opduser) ของโรงพยาบาลโคกศรีสุพรรณ</p>
+            <div class="info-box">
+              <div><strong>ชื่อจากหมอพร้อม:</strong> ${profile.name_th || '-'}</div>
+              <div><strong>หน่วยงาน:</strong> ${profile.organization || 'รพ.โคกศรีสุพรรณ'}</div>
+              <div><strong>เลข ว./ใบอนุญาต:</strong> ${profile.license_id || '-'}</div>
+            </div>
+            <p>กรุณาติดต่อผู้ดูแลระบบเพื่อตรวจสอบการลงทะเบียนเลขบัตรประชาชน (CID) ในระบบ HOSxP</p>
+            <a href="${frontendUrl}">กลับสู่หน้าหลัก</a>
+          </div>
+        </body>
+        </html>
+      `);
+    }
+
+    // Step 6: สร้าง Session และบันทึก
+    const sessionId = crypto.randomBytes(32).toString('hex');
+    const userSession: UserSession = {
+      sessionId,
+      loginname: matchResult.user.loginname,
+      name: matchResult.user.name,
+      doctorcode: matchResult.user.doctorcode || null,
+      cid: matchResult.user.cid || null,
+      providerProfile: {
+        hash_cid: profile.hash_cid,
+        name_th: profile.name_th,
+        organization: profile.organization,
+        license_id: profile.license_id,
+      },
+      loginAt: new Date().toISOString(),
+      expiresAt: Date.now() + (24 * 60 * 60 * 1000), // 24 ชั่วโมง
+    };
+
+    activeSessions.set(sessionId, userSession);
+
+    // Redirect เข้าสู่หน้าหลักของแอปพลิเคชัน พร้อมส่ง Session Token ทาง HTML localStorage
+    return res.send(`
+      <!DOCTYPE html>
+      <html lang="th">
+      <head>
+        <meta charset="utf-8">
+        <title>กำลังเข้าสู่ระบบ...</title>
+      </head>
+      <body>
+        <p style="font-family: sans-serif; text-align: center; margin-top: 50px;">กำลังเข้าสู่ระบบ Hospital Claim Command Center...</p>
+        <script>
+          try {
+            localStorage.setItem('hcc_auth_session', JSON.stringify(${JSON.stringify(userSession)}));
+            localStorage.setItem('hcc_session_id', ${JSON.stringify(sessionId)});
+          } catch (e) {
+            console.error('Storage error', e);
+          }
+          window.location.href = ${JSON.stringify(frontendUrl)};
+        </script>
+      </body>
+      </html>
+    `);
+
+  } catch (err: any) {
+    console.error('MOPH OAuth Flow Error:', err);
+    return res.status(500).send(`
+      <!DOCTYPE html>
+      <html lang="th">
+      <head>
+        <meta charset="utf-8">
+        <title>เกิดข้อผิดพลาดในการเชื่อมต่อ</title>
+        <style>
+          body { font-family: 'Noto Sans Thai', sans-serif; background: #f0f7fb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+          .card { background: white; padding: 32px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.1); max-width: 480px; text-align: center; }
+          h2 { color: #dc2626; margin-top: 0; }
+          p { color: #475569; line-height: 1.6; }
+          .err { background: #fef2f2; border: 1px solid #fee2e2; padding: 10px; border-radius: 6px; color: #991b1b; font-size: 0.85rem; word-break: break-all; margin: 12px 0; }
+          a { display: inline-block; margin-top: 16px; padding: 10px 20px; background: #0284c7; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h2>เกิดข้อผิดพลาดในการเชื่อมต่อ</h2>
+          <p>ไม่สามารถแลกเปลี่ยนข้อมูลกับระบบกระทรวงสาธารณสุขได้ในขณะนี้</p>
+          <div class="err">${err?.message || 'Unknown error'}</div>
+          <a href="${frontendUrl}">กลับสู่หน้าหลัก</a>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+});
+
+// Endpoint: ดึงข้อมูล Session ปัจจุบัน
+app.get('/api/auth/session', (req, res) => {
+  const sessionId = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.query.sessionId as string;
+  if (!sessionId || !activeSessions.has(sessionId)) {
+    return res.json({ success: true, authenticated: false, user: null });
+  }
+
+  const session = activeSessions.get(sessionId)!;
+  if (Date.now() > session.expiresAt) {
+    activeSessions.delete(sessionId);
+    return res.json({ success: true, authenticated: false, user: null, message: 'Session หมดอายุ' });
+  }
+
+  return res.json({
+    success: true,
+    authenticated: true,
+    user: {
+      loginname: session.loginname,
+      name: session.name,
+      doctorcode: session.doctorcode,
+      providerProfile: session.providerProfile,
+      loginAt: session.loginAt,
+    },
+  });
+});
+
+// Endpoint: ออกจากระบบ
+app.post('/api/auth/logout', (req, res) => {
+  const sessionId = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.body?.sessionId;
+  if (sessionId && activeSessions.has(sessionId)) {
+    activeSessions.delete(sessionId);
+  }
+  res.json({ success: true, message: 'ออกจากระบบสำเร็จ' });
 });
 
 const PORT = Number(process.env.TELEMED_PORT) || 3516;
