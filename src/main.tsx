@@ -254,7 +254,7 @@ const fetchApi = async (path: string, options?: RequestInit) => {
 };
 
 function App() {
-  const [page, setPage] = useState<'telemed' | 'civil' | 'pcu'>('telemed');
+  const [page, setPage] = useState<'civil' | 'telemed' | 'pcu'>('civil');
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [data, setData] = useState<TelemedSummary>(emptyData);
@@ -380,8 +380,8 @@ function App() {
           <span>Command Center</span>
         </div>
         <nav>
-          <button className={page === 'telemed' ? 'active' : ''} onClick={() => setPage('telemed')}>Telemed</button>
           <button className={page === 'civil' ? 'active' : ''} onClick={() => setPage('civil')}>สิทธิ์ข้าราชการ</button>
+          <button className={page === 'telemed' ? 'active' : ''} onClick={() => setPage('telemed')}>Telemed</button>
           <button className={page === 'pcu' ? 'active' : ''} onClick={() => setPage('pcu')}>รพ.สต.</button>
         </nav>
 
