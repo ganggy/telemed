@@ -682,6 +682,7 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .service-card.thai.selected { border-color: var(--thai); }
 .service-card.physical.selected { border-color: var(--physical); }
 .service-card.dental.selected { border-color: var(--dental); }
+.service-card.dialysis.selected { border-color: #7c3aed; }
 .service-card.emergency.selected { border-color: #ef4444; }
 .service-card.outpatient.selected { border-color: #2563eb; }
 
@@ -698,6 +699,7 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .service-card.thai .service-symbol { background: var(--thai); }
 .service-card.physical .service-symbol { background: var(--physical); }
 .service-card.dental .service-symbol { background: var(--dental); }
+.service-card.dialysis .service-symbol { background: #7c3aed; }
 .service-card.emergency .service-symbol { background: #ef4444; }
 .service-card.outpatient .service-symbol { background: #2563eb; }
 .service-card-head strong,
@@ -783,6 +785,7 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .service-color.thai { background: var(--thai); }
 .service-color.physical { background: var(--physical); }
 .service-color.dental { background: var(--dental); }
+.service-color.dialysis { background: #7c3aed; }
 .service-color.emergency { background: #ef4444; }
 .service-color.outpatient { background: #2563eb; }
 .civil-service-list strong,
