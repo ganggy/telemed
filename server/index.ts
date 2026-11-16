@@ -54,7 +54,7 @@ const TELEMED_ADP_CODE = String(businessRules?.adp_codes?.telmed || 'TELMED').tr
 const TELEMED_EXPORT_CODE = String(businessRules?.project_codes?.ovstist_tele || '5').trim();
 const TELEMED_CLAIM_AMOUNT = 50;
 const CIVIL_TARGETS_PATH = path.resolve(process.cwd(), 'data', 'civil-service-targets.json');
-const CIVIL_SERVICE_KEYS = ['thai', 'physical', 'dental', 'dialysis', 'emergency', 'outpatient'] as const;
+const CIVIL_SERVICE_KEYS = ['thai', 'physical', 'dental', 'dialysis', 'pcu', 'emergency', 'outpatient'] as const;
 const CIVIL_RIGHT_KEYS = ['OFC', 'LGO'] as const;
 const DEFAULT_CIVIL_VISIT_TARGET = 120;
 
@@ -476,6 +476,14 @@ const getCivilServiceSummary = async (start: string, end: string, staffOnly = fa
                 OR LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
                   REGEXP 'ไตเทียม|ฟอกไต|ฟอกเลือด|ล้างไต|hemodialysis|peritoneal dialysis'
               THEN 1 ELSE 0 END) = 1 THEN 'dialysis'
+            WHEN MAX(CASE
+              WHEN o.main_dep IN ('022', '023', '027', '052', '065')
+                OR o.cur_dep IN ('022', '023', '027', '052', '065')
+                OR o.spclty = '15'
+                OR LOWER(COALESCE(kd.department, '')) REGEXP 'pcu|ปฐมภูมิ'
+                OR LOWER(CONCAT_WS(' ', COALESCE(sd.name, ''), COALESCE(ndi.name, ''), COALESCE(inc.name, '')))
+                  REGEXP 'pcu|ปฐมภูมิ'
+              THEN 1 ELSE 0 END) = 1 THEN 'pcu'
             WHEN MAX(CASE WHEN er.vn IS NOT NULL THEN 1 ELSE 0 END) = 1 THEN 'emergency'
             ELSE 'outpatient'
           END AS serviceGroup,
@@ -516,6 +524,7 @@ const getCivilServiceSummary = async (start: string, end: string, staffOnly = fa
       physical: 'กายภาพบำบัด',
       dental: 'ทันตกรรม',
       dialysis: 'ไตเทียม',
+      pcu: 'PCU / ปฐมภูมิ',
       emergency: 'อุบัติเหตุฉุกเฉิน',
       outpatient: 'ผู้ป่วยนอก',
     };

@@ -782,6 +782,7 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .service-card.physical.selected { border-color: var(--physical); background: linear-gradient(155deg, #ffffff, #f5f3ff); }
 .service-card.dental.selected { border-color: var(--dental); background: linear-gradient(155deg, #ffffff, #fff1f5); }
 .service-card.dialysis.selected { border-color: #7c3aed; background: linear-gradient(155deg, #ffffff, #f5f3ff); }
+.service-card.pcu.selected { border-color: #d97706; background: linear-gradient(155deg, #ffffff, #fffbeb); }
 .service-card.emergency.selected { border-color: #ef4444; background: linear-gradient(155deg, #ffffff, #fef2f2); }
 .service-card.outpatient.selected { border-color: #2563eb; background: linear-gradient(155deg, #ffffff, #eff6ff); }
 
@@ -800,6 +801,7 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .service-card.physical .service-symbol { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
 .service-card.dental .service-symbol { background: linear-gradient(135deg, #f43f5e, #db2777); }
 .service-card.dialysis .service-symbol { background: linear-gradient(135deg, #9333ea, #6d28d9); }
+.service-card.pcu .service-symbol { background: linear-gradient(135deg, #f59e0b, #d97706); }
 .service-card.emergency .service-symbol { background: linear-gradient(135deg, #f97316, #dc2626); }
 .service-card.outpatient .service-symbol { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }
 .service-card-head strong,
@@ -892,6 +894,7 @@ td small { margin-top: 3px; color: #5f7f91; font-size: 0.76rem; }
 .service-color.physical { background: var(--physical); }
 .service-color.dental { background: var(--dental); }
 .service-color.dialysis { background: #7c3aed; }
+.service-color.pcu { background: #d97706; }
 .service-color.emergency { background: #ef4444; }
 .service-color.outpatient { background: #2563eb; }
 .civil-service-list strong,
